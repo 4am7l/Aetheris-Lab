@@ -1,12 +1,21 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import Chip from "@mui/material/Chip";
+import TextField from "@mui/material/TextField";
+import InputAdornment from "@mui/material/InputAdornment";
+import IconButton from "@mui/material/IconButton";
+import Paper from "@mui/material/Paper";
+import Button from "@mui/material/Button";
 import { categories, searchChemicals } from "../data/chemicals";
 import { Icon } from "../ui";
 import { useText } from "../text";
 import PageHeading from "../components/PageHeading";
 export default function Library() {
   const t = useText();
-  const [query, setQuery] = useState("");
+  const [params, setParams] = useSearchParams();
+  const query = params.get("q") ?? "";
+  const setQuery = (value: string) =>
+    setParams(value ? { q: value } : {}, { replace: true });
   const [category, setCategory] = useState("All entries");
   const [visible, setVisible] = useState(8);
   const filtered = searchChemicals(query, category);
@@ -17,49 +26,63 @@ export default function Library() {
         title={t("library")}
         description={t("libraryIntro")}
       />
-      <div className="library-search search-box">
-        <Icon name="search" />
-        <input
-          aria-label={t("search")}
-          placeholder={t("searchPlaceholder")}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setVisible(8);
-          }}
-        />
-        {query && (
-          <button
-            className="icon-button"
-            aria-label={t("close")}
-            onClick={() => setQuery("")}
-          >
-            <Icon name="close" />
-          </button>
-        )}
-      </div>
+      <TextField
+        className="library-search"
+        fullWidth
+        placeholder={t("searchPlaceholder")}
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setVisible(8);
+        }}
+        slotProps={{
+          htmlInput: { "aria-label": t("search") },
+          input: {
+            startAdornment: (
+              <InputAdornment position="start">
+                <Icon name="search" />
+              </InputAdornment>
+            ),
+            endAdornment: query ? (
+              <InputAdornment position="end">
+                <IconButton
+                  aria-label={t("close")}
+                  onClick={() => setQuery("")}
+                >
+                  <Icon name="close" />
+                </IconButton>
+              </InputAdornment>
+            ) : undefined,
+          },
+        }}
+      />
       {query && (
         <div className="suggestions">
           {filtered.slice(0, 4).map((c) => (
-            <button key={c.id} onClick={() => setQuery(c.name)}>
-              {c.name} · {c.cas}
-            </button>
+            <Chip
+              key={c.id}
+              label={c.name + " · " + c.cas}
+              onClick={() => setQuery(c.name)}
+              variant="outlined"
+            />
           ))}
         </div>
       )}
-      <div className="filter-row" aria-label="Categories">
+      <div className="filter-row" aria-label={t("classification")}>
         {categories.map((c) => (
-          <button
-            className={`filter-chip ${category === c ? "active" : ""}`}
-            aria-pressed={category === c}
+          <Chip
             key={c}
+            component="button"
+            type="button"
+            label={c === "All entries" ? t("all") : c}
+            variant={category === c ? "filled" : "outlined"}
+            aria-pressed={category === c}
             onClick={() => {
               setCategory(c);
               setVisible(8);
             }}
-          >
-            {c === "All entries" ? t("all") : c}
-          </button>
+            className={category === c ? "selected-filter" : ""}
+          />
         ))}
       </div>
       <p className="catalog-note">
@@ -67,28 +90,29 @@ export default function Library() {
         {t("catalogNote")}
       </p>
       {filtered.length ? (
-        <div className="library-grid">
+        <Paper className="catalog-list">
+          <div className="catalog-table-heading">
+            <span>{t("substance")}</span>
+            <span>{t("cas")}</span>
+            <span>{t("classification")}</span>
+          </div>
           {filtered.slice(0, visible).map((c) => (
-            <Link to={`/library/${c.id}`} className="chemical-card" key={c.id}>
-              <div className="chemical-card-top">
-                <span className="formula">{c.formula}</span>
-                <span className="category-pill">{c.category}</span>
-              </div>
-              <h2>{c.name}</h2>
-              <p className="muted">{c.aliases[0]}</p>
-              <div className="chemical-meta">
-                <span>CAS {c.cas}</span>
-                <span>{c.mass} g/mol</span>
-              </div>
-              <div className="chemical-card-bottom">
+            <Link className="catalog-row" to={"/library/" + c.id} key={c.id}>
+              <div className="catalog-substance">
+                <span className="catalog-formula">{c.formula}</span>
                 <span>
-                  <Icon name="verified" /> NIOSH reference
+                  <strong>{c.name}</strong>
+                  <small>{c.aliases[0]}</small>
                 </span>
-                <span>{t("details")}</span>
               </div>
+              <span className="catalog-cas" dir="ltr">
+                {c.cas}
+              </span>
+              <span className="catalog-category">{c.category}</span>
+              <Icon name="chevron_right" />
             </Link>
           ))}
-        </div>
+        </Paper>
       ) : (
         <div className="panel empty-state">
           <Icon name="search_off" />
@@ -97,12 +121,9 @@ export default function Library() {
         </div>
       )}
       {visible < filtered.length && (
-        <button
-          className="button outlined"
-          onClick={() => setVisible((v) => v + 8)}
-        >
-          Load more
-        </button>
+        <Button onClick={() => setVisible((v) => v + 8)}>
+          {t("loadMore")}
+        </Button>
       )}
     </div>
   );

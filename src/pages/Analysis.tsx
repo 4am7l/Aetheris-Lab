@@ -1,3 +1,5 @@
+import Button from "@mui/material/Button";
+import TextField from "@mui/material/TextField";
 import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -100,19 +102,16 @@ export default function Analysis() {
         />
       </div>
       <section className="panel context-panel">
-        <label className="field">
-          <span className="label-icon">
-            <Icon name="tune" />
-            {t("conditions")}
-          </span>
-          <textarea
-            value={conditions}
-            onChange={(e) => setConditions(e.target.value)}
-            rows={3}
-            maxLength={2500}
-            placeholder={t("conditionsHint")}
-          />
-        </label>
+        <TextField
+          fullWidth
+          multiline
+          rows={3}
+          label={t("conditions")}
+          value={conditions}
+          onChange={(e) => setConditions(e.target.value)}
+          placeholder={t("conditionsHint")}
+          slotProps={{ htmlInput: { maxLength: 2500 } }}
+        />
         <p className="small muted">{t("unknownFields")}</p>
       </section>
       <section className="submission-panel">
@@ -120,40 +119,43 @@ export default function Analysis() {
           <h3>{t("analyzeCompatibility")}</h3>
           <p>{t("realDisabled")}</p>
         </div>
-        <button disabled className="button primary">
+        <Button disabled variant="contained">
           <Icon name="lock" />
           {t("analyzeCompatibility")}
-        </button>
+        </Button>
       </section>
       <div className="local-actions">
         <div>
           <p>{t("localNotice")}</p>
-          <label className="check-field">
-            <input
-              type="checkbox"
-              checked={fail}
-              onChange={(e) => setFail(e.target.checked)}
-            />
-            {t("simulateFailure")}
-          </label>
+          <details className="demo-options">
+            <summary>{t("demoOptions")}</summary>
+            <label className="check-field">
+              <input
+                type="checkbox"
+                checked={fail}
+                onChange={(e) => setFail(e.target.checked)}
+              />
+              {t("simulateFailure")}
+            </label>
+          </details>
         </div>
         <div className="button-row">
-          <button
-            className="button outlined"
+          <Button
+            variant="outlined"
             disabled={!a || !b}
             onClick={() => save("draft")}
           >
             <Icon name="save" />
             {t("saveDraft")}
-          </button>
-          <button
-            className="button subtle"
+          </Button>
+          <Button
+            variant="text"
             disabled={!a || !b}
             onClick={() => save("demo")}
           >
             <Icon name="play_circle" />
             {t("demoRun")}
-          </button>
+          </Button>
         </div>
       </div>
       {error && <Notice kind="error">{error}</Notice>}

@@ -1,3 +1,6 @@
+import TextField from "@mui/material/TextField";
+import InputAdornment from "@mui/material/InputAdornment";
+import Button from "@mui/material/Button";
 import { useText } from "../text";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -89,36 +92,60 @@ export function SolutionCard({
     setMethod(null);
   }
   const field = (key: keyof Solution, label: string, numeric = false) => (
-    <div className="field" key={key}>
-      <label htmlFor={`input-${letter}-${key}`}>{label}</label>
-      <div className="unknown-field">
-        <input
-          id={`input-${letter}-${key}`}
-          value={form[key]}
-          onChange={(e) => update(key, e.target.value)}
-          aria-invalid={!!errors[key]}
-          aria-describedby={errors[key] ? `error-${letter}-${key}` : undefined}
-          inputMode={numeric ? "decimal" : undefined}
-          maxLength={200}
-          required
-        />
-        {key !== "name" && (
-          <button
-            type="button"
-            className="unknown-button"
-            aria-label={`${t("unknown")}: ${label}`}
-            onClick={() => update(key, form[key] === unknown ? "" : unknown)}
-          >
-            {form[key] === unknown ? t("editUnknown") : t("unknown")}
-          </button>
-        )}
-      </div>
-      {errors[key] && (
-        <small id={`error-${letter}-${key}`} className="field-error">
-          {errors[key]}
-        </small>
-      )}
-    </div>
+    <TextField
+      key={key}
+      id={"input-" + letter + "-" + key}
+      fullWidth
+      label={label}
+      value={form[key]}
+      required
+      error={!!errors[key]}
+      helperText={errors[key]}
+      onChange={(e) => update(key, e.target.value)}
+      slotProps={{
+        htmlInput: { inputMode: numeric ? "decimal" : "text", maxLength: 200 },
+        input: {
+          endAdornment:
+            key === "name" ? undefined : (
+              <InputAdornment position="end">
+                <Button
+                  className="unknown-action"
+                  type="button"
+                  size="small"
+                  aria-label={t("unknown") + ": " + label}
+                  onClick={() =>
+                    update(key, form[key] === unknown ? "" : unknown)
+                  }
+                >
+                  {form[key] === unknown ? t("editUnknown") : t("unknown")}
+                </Button>
+              </InputAdornment>
+            ),
+        },
+      }}
+    />
+  );
+  const selection = (
+    key: "unit" | "state" | "quantityUnit",
+    label: string,
+    options: string[],
+  ) => (
+    <TextField
+      fullWidth
+      select
+      label={label}
+      value={form[key]}
+      onChange={(e) => update(key, e.target.value)}
+      error={!!errors[key]}
+      helperText={errors[key]}
+      slotProps={{ select: { native: true } }}
+    >
+      {options.map((v) => (
+        <option key={v} value={v}>
+          {v === "Unknown" ? t("unknown") : v}
+        </option>
+      ))}
+    </TextField>
   );
   return (
     <>
@@ -203,22 +230,34 @@ export function SolutionCard({
           </div>
         )}
         <div className="method-grid">
-          <button onClick={() => setMethod("camera")}>
-            <Icon name="photo_camera" />
+          <Button
+            variant="outlined"
+            onClick={() => setMethod("camera")}
+            startIcon={<Icon name="photo_camera" />}
+          >
             {t("camera")}
-          </button>
-          <button onClick={() => fileRef.current?.click()}>
-            <Icon name="upload" />
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => fileRef.current?.click()}
+            startIcon={<Icon name="upload" />}
+          >
             {t("upload")}
-          </button>
-          <button onClick={() => setMethod("search")}>
-            <Icon name="search" />
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => setMethod("search")}
+            startIcon={<Icon name="search" />}
+          >
             {t("search")}
-          </button>
-          <button onClick={manual}>
-            <Icon name="edit_note" />
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={manual}
+            startIcon={<Icon name="edit_note" />}
+          >
             {t("manual")}
-          </button>
+          </Button>
         </div>
         <input
           ref={fileRef}
@@ -309,66 +348,46 @@ export function SolutionCard({
               {field("formula", t("formula"))}
               {field("cas", t("cas"))}
               {field("concentration", t("concentration"), true)}
-              <label className="field">
-                <span>{t("unit")}</span>
-                <select
-                  value={form.unit}
-                  onChange={(e) => update("unit", e.target.value)}
-                >
-                  {["Unknown", "% w/w", "% v/v", "mol/L", "g/L"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-                {errors.unit && (
-                  <small className="field-error">{errors.unit}</small>
-                )}
-              </label>
+              {selection("unit", t("unit"), [
+                "Unknown",
+                "% w/w",
+                "% v/v",
+                "mol/L",
+                "g/L",
+              ])}
               {field("solvent", t("solvent"))}
-              <label className="field">
-                <span>{t("state")}</span>
-                <select
-                  value={form.state}
-                  onChange={(e) => update("state", e.target.value)}
-                >
-                  {["Unknown", "Liquid", "Solid", "Gas"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </label>
+              {selection("state", t("state"), [
+                "Unknown",
+                "Liquid",
+                "Solid",
+                "Gas",
+              ])}
               {field("temperature", t("temperature"), true)}
               {field("quantity", t("quantity"), true)}
-              <label className="field">
-                <span>{t("quantityUnit")}</span>
-                <select
-                  value={form.quantityUnit}
-                  onChange={(e) => update("quantityUnit", e.target.value)}
-                >
-                  {["Unknown", "mL", "L", "g", "kg"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field wide">
-                <span>{t("notes")}</span>
-                <textarea
-                  value={form.notes}
-                  maxLength={2000}
-                  rows={3}
-                  onChange={(e) => update("notes", e.target.value)}
-                />
-              </label>
+              {selection("quantityUnit", t("quantityUnit"), [
+                "Unknown",
+                "mL",
+                "L",
+                "g",
+                "kg",
+              ])}
+              <TextField
+                className="wide"
+                label={t("notes")}
+                multiline
+                rows={3}
+                value={form.notes}
+                onChange={(e) => update("notes", e.target.value)}
+                slotProps={{ htmlInput: { maxLength: 2000 } }}
+              />
             </div>
             <div className="modal-actions">
-              <button
-                type="button"
-                className="button subtle"
-                onClick={() => setMethod(null)}
-              >
+              <Button type="button" onClick={() => setMethod(null)}>
                 {t("cancel")}
-              </button>
-              <button className="button primary" type="submit">
+              </Button>
+              <Button variant="contained" type="submit">
                 {t("confirm")}
-              </button>
+              </Button>
             </div>
           </form>
         </Modal>

@@ -1,4 +1,20 @@
 export const en = {
+  searchAction: "Search",
+  demoOptions: "Demo options",
+  homeTitle: "Chemical compatibility",
+  homeDescription:
+    "A workspace for chemical references and expert-reviewed requests.",
+  startRequest: "Start a compatibility request",
+  startRequestDescription:
+    "Add two solutions, document the conditions, and prepare your request for expert review.",
+  scanLabel: "Scan a label",
+  librarySearchHint: "Find a substance by name, formula, or CAS number.",
+  shortSearchPlaceholder: "Search the chemical library",
+  noLocalRequests: "No requests yet",
+  switchToDark: "Switch to dark mode",
+  switchToLight: "Switch to light mode",
+  substance: "Substance",
+  loadMore: "Load more",
   home: "Home",
   analysis: "Chemical Analysis",
   library: "Chemical Library",
@@ -100,7 +116,7 @@ export const en = {
   requestMissing: "Request not found in this browser.",
   approval:
     "Human review is an additional safety control, not a guarantee of scientific correctness.",
-  aboutTitle: "Science deserves evidence.\nDecisions deserve review.",
+  aboutTitle: "About Aetheris Lab",
   aboutText:
     "Aetheris Lab is a structured workspace for preparing chemical compatibility questions. It brings chemical identities, concentrations, conditions, and references together for a future evidence-led AI agent and an independent human reviewer.",
   theme: "Theme",
@@ -159,7 +175,7 @@ export const en = {
   required: "Required",
   sourceSelection:
     "Selection from the catalog is a reference match, not verification of your physical sample.",
-  footer: "Evidence first. Human judgment always.",
+  footer: "Chemical references and expert review",
   continueManual: "Continue with manual entry",
   unknownFields:
     "Unknown details will need clarification before a meaningful assessment.",
@@ -167,6 +183,45 @@ export const en = {
 export type TextKey = keyof typeof en;
 // Partial dictionary fallback keeps new keys safe; expand and professionally review before public Arabic release.
 export const ar: Partial<Record<TextKey, string>> = {
+  analysisIntro:
+    "حدّد المحلولين وأدخل المعلومات المتوفرة. اترك ما لا تعرفه محددًا كغير معروف.",
+  steps: "تحديد المواد · المراجع · مراجعة الخبير",
+  conditionsHint:
+    "درجة الحرارة والضغط ومادة الوعاء والاستخدام المقصود وأي ظروف ذات صلة.",
+  unknownFields:
+    "قد تحتاج المعلومات غير المعروفة إلى توضيح قبل إجراء تقييم مفيد.",
+  realDisabled:
+    "إرسال الطلبات غير متاح حتى يتم ربط خدمات التحليل والمراجع وتطبيق المراجعة.",
+  localNotice:
+    "تُحفظ المسودات والطلبات التجريبية في هذا المتصفح فقط. لا تُحفظ الصور ولا تُرفع إلى خادم.",
+  imageNotice: "الصورة لا تثبت التركيب أو التركيز. أكّد تفاصيل المادة يدويًا.",
+  unknownHint: "اختر «غير معروف» للمعلومات التي لا تستطيع التحقق منها.",
+  editUnknown: "إدخال قيمة",
+  mobileMenu: "فتح القائمة",
+  libraryIntro: "مجموعة أولية محدودة من المراجع الكيميائية الموثّقة.",
+  catalogNote:
+    "٤ مراجع أولية للمواد · مكتبة غير شاملة · لا تتضمن أحكام توافق بين المواد",
+  localReference: "المراجع الأولية",
+  services: "حالة الخدمات",
+  catalog: "مكتبة المراجع",
+  ai: "التحليل بالذكاء الاصطناعي",
+  pending: "بانتظار الربط",
+  aboutTitle: "عن أثيريس لاب",
+  searchAction: "بحث",
+  demoOptions: "خيارات التجربة",
+  homeTitle: "التوافق الكيميائي",
+  homeDescription: "مساحة للمراجع الكيميائية وطلبات التقييم بمراجعة الخبراء.",
+  startRequest: "ابدأ طلب تقييم التوافق",
+  startRequestDescription:
+    "أضف محلولين والظروف المحيطة، وجهّز طلبك لمراجعة الخبير.",
+  scanLabel: "تصوير الملصق",
+  librarySearchHint: "ابحث عن المادة بالاسم أو الصيغة أو رقم CAS.",
+  shortSearchPlaceholder: "ابحث في المكتبة الكيميائية",
+  noLocalRequests: "لا توجد طلبات بعد",
+  switchToDark: "تفعيل الوضع الداكن",
+  switchToLight: "تفعيل الوضع الفاتح",
+  substance: "المادة",
+  loadMore: "عرض المزيد",
   home: "الرئيسية",
   analysis: "التحليل الكيميائي",
   library: "المكتبة الكيميائية",
@@ -197,7 +252,6 @@ export const ar: Partial<Record<TextKey, string>> = {
   viewAll: "عرض جميع الطلبات",
   noRequests: "بداية جديدة لأبحاثك",
   noRequestsText: "ستظهر هنا المسودات والطلبات التجريبية.",
-  services: "توفر الخدمات",
   available: "متاح محليًا",
   offline: "غير متصل",
   newAnalysis: "تحليل جديد",
@@ -237,7 +291,7 @@ export const ar: Partial<Record<TextKey, string>> = {
   empty: "لا توجد نتائج",
   details: "عرض المرجع",
   searchPlaceholder: "ابحث بالاسم أو الصيغة أو رقم CAS أو الفئة…",
-  footer: "الأدلة أولًا. والحكم البشري دائمًا.",
+  footer: "مراجع كيميائية ومراجعة الخبراء",
   loading: "جارٍ التحميل…",
   conditions: "الظروف البيئية والسياق",
   copy: "تنزيل JSON",

@@ -7,7 +7,17 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        manualChunks: { motion: ["motion/react"], validation: ["zod"] },
+        manualChunks: {
+          motion: ["motion/react"],
+          validation: ["zod"],
+          material: [
+            "@mui/material/Button",
+            "@mui/material/Dialog",
+            "@mui/material/TextField",
+            "@mui/material/Chip",
+            "@mui/material/styles",
+          ],
+        },
       },
     },
   },

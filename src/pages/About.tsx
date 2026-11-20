@@ -1,4 +1,4 @@
-import { Icon, Molecule, Notice } from "../ui";
+import { Icon, Notice } from "../ui";
 import { useText } from "../text";
 import PageHeading from "../components/PageHeading";
 export default function About() {
@@ -10,7 +10,6 @@ export default function About() {
         title={t("aboutTitle")}
         description={t("aboutText")}
       />
-      <Molecule />
       <div className="detail-grid">
         <section className="panel">
           <Icon name="verified_user" />
