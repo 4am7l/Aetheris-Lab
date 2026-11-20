@@ -1,7 +1,14 @@
 @import "tailwindcss";
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+@font-face {
+  font-family: "Aetheris Samsung";
+  src: url("/fonts/samsung.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
 :root {
-  font-family: Roboto, "Noto Sans Arabic", sans-serif;
+  font-family: "Aetheris Samsung", sans-serif;
   font-synthesis: none;
   color-scheme: light;
   --bg: #f8fafd;
@@ -81,7 +88,7 @@ p {
 h1,
 h2,
 h3 {
-  font-family: Roboto, "Noto Sans Arabic", sans-serif;
+  font-family: "Aetheris Samsung", sans-serif;
   font-weight: 400;
 }
 h1 {
@@ -196,7 +203,7 @@ select:focus {
   white-space: pre-line;
 }
 .mono {
-  font-family: monospace;
+  font-family: inherit;
   overflow-wrap: anywhere;
 }
 .app-shell {

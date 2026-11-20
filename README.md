@@ -12,7 +12,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open the URL printed by Vite (normally http://127.0.0.1:5173). Camera access requires localhost or HTTPS and browser permission. The app runs without Cloudflare credentials. If remote fonts are blocked it falls back to system fonts; self-host Roboto, Noto Sans Arabic and Material Symbols for an offline release.
+Open the URL printed by Vite (normally http://127.0.0.1:5173). Camera access requires localhost or HTTPS and browser permission. The app runs without Cloudflare credentials. The user-supplied Samsung font is served locally from `public/fonts/samsung.ttf` and preloaded for all interface text, including Material UI dialogs and controls. Material Symbols remains a separate icon font; self-host it for a fully offline release.
 
 ```sh
 npm run build
@@ -25,7 +25,7 @@ npm test
 ## Implemented
 
 - Responsive Home, Chemical Analysis, Chemical Library/details, My Requests/details, About and not-found routes.
-- Material UI library components and a restrained Google-inspired shell: rounded navigation, pill buttons, outlined forms, dialogs, filter chips and a neutral palette with one blue accent. Roboto/Arabic typography, Motion transitions, reduced-motion support, accessible modal focus handling, keyboard focus and touch targets.
+- Material UI library components and a restrained Google-inspired shell: rounded navigation, pill buttons, outlined forms, dialogs, filter chips and a neutral palette with one blue accent. User-supplied Samsung typography for English and Arabic, Motion transitions, reduced-motion support, accessible modal focus handling, keyboard focus and touch targets.
 - Direct one-click light/dark toggle with a persistent preference and system detection until the first explicit selection; English default, Arabic dictionary with RTL layout and English fallback for untranslated content. Arabic localization is a starting point and needs full professional translation before public release.
 - Independent solution forms with CAS checksum, concentration/unit, state, solvent, temperature, quantity, composition notes and explicit Unknown fields. Catalog selection does not assume the physical state or concentration of a solution.
 - Camera preview, capture, retake, stream cleanup, denial/error handling, upload fallback, image preview/removal, JPEG/PNG/WebP and 10 MB validation. Camera images are resized to a maximum width of 2000 px. Images are never uploaded or persisted; they last only during the analysis page session.

@@ -30,7 +30,7 @@ export function createLabTheme(
       divider: dark ? "#3c4043" : "#e1e3e1",
     },
     typography: {
-      fontFamily: 'Roboto, "Noto Sans Arabic", sans-serif',
+      fontFamily: '"Aetheris Samsung", sans-serif',
       fontSize: 14,
       h1: { fontWeight: 400 },
       h2: { fontWeight: 400 },
