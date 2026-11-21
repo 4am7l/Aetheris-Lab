@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   blankSolution,
   solutionSchema,
@@ -7,7 +7,7 @@ import {
   localRequestSchema,
 } from "./domain";
 import { searchChemicals } from "./data/chemicals";
-import { listLocalRequests, saveLocalRequest, runDemo } from "./services/local";
+import { listLocalRequests, saveLocalRequest } from "./services/local";
 import {
   publishableResult,
   type VerifiedReviewContext,
@@ -47,7 +47,7 @@ describe("structured validation", () => {
     expect(searchChemicals("fictionalium")).toEqual([]);
   });
 });
-describe("local demo boundary", () => {
+describe("local draft and archived data", () => {
   beforeEach(() => {
     const data = new Map<string, string>();
     vi.stubGlobal("localStorage", {
@@ -55,11 +55,9 @@ describe("local demo boundary", () => {
       setItem: (k: string, v: string) => data.set(k, v),
     });
   });
+  afterEach(() => vi.unstubAllGlobals());
   it("never accepts Approved from local storage", () => {
-    const r = saveLocalRequest(
-      { a: solution, b: solution, conditions: "" },
-      "demo",
-    );
+    const r = saveLocalRequest({ a: solution, b: solution, conditions: "" });
     expect(
       localRequestSchema.safeParse({ ...r, status: "Approved" }).success,
     ).toBe(false);
@@ -69,32 +67,12 @@ describe("local demo boundary", () => {
     );
     expect(() => listLocalRequests()).toThrow();
   });
-  it("stops the demo at a labeled review placeholder, with no result", async () => {
-    vi.useFakeTimers();
-    const r = saveLocalRequest(
-      { a: solution, b: solution, conditions: "" },
-      "demo",
-    );
-    const run = runDemo(r.id, () => {});
-    await vi.runAllTimersAsync();
-    await run;
-    const updated = listLocalRequests()[0];
-    expect(updated.status).toBe("Awaiting Administrator Review");
-    expect(updated.history.every((h) => h.note.includes("DEMO"))).toBe(true);
-    expect(updated).not.toHaveProperty("result");
-    vi.useRealTimers();
-  });
-  it("can simulate failure without a verdict", async () => {
-    vi.useFakeTimers();
-    const r = saveLocalRequest(
-      { a: solution, b: solution, conditions: "" },
-      "demo",
-    );
-    const run = runDemo(r.id, () => {}, true);
-    await vi.runAllTimersAsync();
-    await run;
-    expect(listLocalRequests()[0].status).toBe("Failed");
-    vi.useRealTimers();
+  it("creates only drafts and still reads records from the retired preview", () => {
+    const draft = saveLocalRequest({ a: solution, b: solution, conditions: "" });
+    expect(draft).toMatchObject({ mode: "draft", status: "Draft" });
+    const archive = { ...draft, mode: "demo", status: "Awaiting Administrator Review" };
+    localStorage.setItem("aetheris.requests.v1", JSON.stringify([archive]));
+    expect(listLocalRequests()).toEqual([archive]);
   });
 });
 describe("server approval gate", () => {

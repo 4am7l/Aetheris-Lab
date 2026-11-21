@@ -945,13 +945,11 @@ footer {
   color: var(--muted);
   max-width: 500px;
 }
-.check-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.8125rem;
-  color: var(--muted);
-  margin-top: 12px;
+.request-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0;
 }
 .dialog-heading.MuiDialogTitle-root {
   display: flex;
@@ -2011,16 +2009,4 @@ footer {
   min-width: 65px;
   min-height: 36px;
   padding: 6px 12px;
-}
-.demo-options {
-  margin-top: 12px;
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
-.demo-options summary {
-  cursor: pointer;
-  display: list-item;
-}
-.demo-options .check-field {
-  margin-top: 12px;
 }
