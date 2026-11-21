@@ -6,8 +6,8 @@ workers_dev = false
 # Replace these placeholders before deployment. No resources are provisioned automatically.
 [[d1_databases]]
 binding = "DB"
-database_name = "aetheris-lab"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_name = "aetheris-lab-db"
+database_id = "81233c23-e705-42c4-add1-94a7727bc41f"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
