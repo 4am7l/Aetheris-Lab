@@ -1,5 +1,5 @@
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
-import { requestInputSchema, solutionSchema, unknown } from "../src/domain";
+import { publicInputSchema, publicRequestMaxBytes, publicRequestPath } from "../src/domain";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -15,37 +15,10 @@ export interface Env {
   CF_ACCESS_AUD: string;
 }
 
-const publicRequestPath = "/api/requests";
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const submittedStatus = "Submitted";
-const maxBodyBytes = 32 * 1024;
 const jsonContentType = /^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?$/i;
-const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
-const publicSolutionSchema = solutionSchema
-  .strict()
-  .superRefine((value, ctx) => {
-    for (const field of ["concentration", "quantity", "temperature"] as const) {
-      if (value[field] !== unknown && !decimal.test(value[field])) {
-        ctx.addIssue({
-          code: "custom",
-          path: [field],
-          message: "Expected a decimal value.",
-        });
-      }
-    }
-    if (value.quantity !== unknown && value.quantityUnit === unknown) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["quantityUnit"],
-        message: "Choose a quantity unit.",
-      });
-    }
-  });
-const publicInputSchema = requestInputSchema.strict().extend({
-  a: publicSolutionSchema,
-  b: publicSolutionSchema,
-});
 
 const unavailable = {
   error: "INTEGRATION_UNAVAILABLE",
@@ -114,11 +87,11 @@ async function readPublicInput(request: Request) {
   const length = request.headers.get("Content-Length");
   if (length !== null) {
     if (!/^\d+$/.test(length)) return error("INVALID_CONTENT_LENGTH", 400);
-    if (Number(length) > maxBodyBytes) return error("PAYLOAD_TOO_LARGE", 413);
+    if (Number(length) > publicRequestMaxBytes) return error("PAYLOAD_TOO_LARGE", 413);
   }
   if (!request.body) return error("INVALID_JSON", 400);
 
-  const bytes = new Uint8Array(maxBodyBytes);
+  const bytes = new Uint8Array(publicRequestMaxBytes);
   let size = 0;
   let input: unknown;
   const reader = request.body.getReader();
@@ -126,7 +99,7 @@ async function readPublicInput(request: Request) {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (size + value.byteLength > maxBodyBytes) {
+      if (size + value.byteLength > publicRequestMaxBytes) {
         void reader.cancel().catch(() => {});
         return error("PAYLOAD_TOO_LARGE", 413);
       }

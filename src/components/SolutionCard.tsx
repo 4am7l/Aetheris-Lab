@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   blankSolution,
-  solutionSchema,
+  publicSolutionSchema,
   unknown,
   validateImage,
   type Solution,
@@ -79,7 +79,7 @@ export function SolutionCard({
   }
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    const parsed = solutionSchema.safeParse(form);
+    const parsed = publicSolutionSchema.safeParse(form);
     if (!parsed.success) {
       setErrors(
         Object.fromEntries(

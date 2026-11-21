@@ -1,6 +1,6 @@
 # Aetheris Lab
 
-A React + TypeScript scientific workspace for documenting two solutions and preparing chemical compatibility questions for independent expert review. The Cloudflare Worker accepts public submissions and provides token-protected receipts. The frontend demo runs locally and stops at a review placeholder.
+A React + TypeScript scientific workspace for documenting two solutions and preparing chemical compatibility questions for independent expert review. The frontend submits requests to the Cloudflare Worker and displays token-protected receipts.
 
 ## Run locally
 
@@ -9,7 +9,13 @@ The Worker tests use Node's built-in SQLite module. On Node 22.12, enable it wit
 
 ```sh
 npm ci
-cp .env.example .env.local
+npx wrangler d1 migrations apply DB --local
+npm run worker:dev
+```
+
+Start Vite in a second terminal.
+
+```sh
 npm run dev
 ```
 
@@ -31,8 +37,8 @@ npm test
 - Independent solution forms with CAS checksum, concentration/unit, state, solvent, temperature, quantity, composition notes and explicit Unknown fields. Catalog selection does not assume the physical state or concentration of a solution.
 - Camera preview, capture, retake, stream cleanup, denial/error handling, upload fallback, image preview/removal, JPEG/PNG/WebP and 10 MB validation. Camera images are resized to a maximum width of 2000 px. Images are never uploaded or persisted; they last only during the analysis page session.
 - Four actual NIOSH substance records checked 2026-11-20; indexed name, alias, ASCII formula/subscript normalization, CAS and category search. No invented records, GHS claims, or solution-specific conclusions.
-- Validated browser-local drafts and demo workflow records, timestamps, audit-style history, JSON download, storage-error handling. Demo can exercise a service failure. It never contacts a reviewer or produces a scientific assessment.
-- Public intake and token-protected tracking in the Worker, with rate limiting and D1 storage. See [Cloudflare setup and API contract](docs/cloudflare.md).
+- Browser-local drafts with JSON download. Older preview records remain readable as archived local data.
+- Public intake and token-protected tracking through a same-origin Pages Function, with rate limiting and D1 storage in the Worker. The browser stores a private, removable tracking token for each receipt. See [Cloudflare setup and API contract](docs/cloudflare.md).
 - Typed integration contracts, a future evidence orchestrator, and preparation for private R2 storage.
 - Real Analyze Compatibility is intentionally disabled. Local request schema explicitly excludes Approved. Local data can never unlock a final result.
 
@@ -47,7 +53,9 @@ npm test
 | `src/i18n.ts`                     | English/Arabic UI dictionaries                                     |
 | `src/data/chemicals.ts`           | Small source-linked catalog                                        |
 | `src/services/contracts.ts`       | Provider and Admin integration interfaces                          |
-| `src/services/local.ts`           | Local-only repository and explicit demo provider                   |
+| `src/services/local.ts`           | Local drafts and chemical catalog services                         |
+| `src/services/publicRequests.ts`  | Public intake and receipt client                                   |
+| `functions/api/`                  | Same-origin Pages Function for public Worker routes                 |
 | `worker/index.ts`                 | Public intake, receipt lookup, and health endpoint                 |
 | `worker/orchestrator.ts`          | Dependency-injected, server-only future agent pipeline             |
 | `worker/publication.ts`           | Deny-by-default final-result publication predicate                 |
@@ -58,7 +66,7 @@ npm test
 
 ## Integration status and remaining work
 
-Public submissions can be sent directly to the Worker API. The React frontend still uses browser-local drafts and the explicit demo. The Worker returns **503** for image, result, and review integrations.
+Public submissions and tracking use the Worker API. Receipts confirm intake and report `Submitted`. The Worker returns **503** for image, result, and review integrations.
 
 The future analysis and review workflow requires server-enforced lifecycle transitions and idempotency, identity and current SDS providers, an evidence-constrained analysis provider, durable orchestration, private R2 delivery, authenticated Aetheris Admin integration, signed review verification, replay protection, retention and monitoring. Enable `ApprovedResultPanel` only after authenticated access and verified final-result publication are implemented.
 
@@ -70,4 +78,4 @@ Local storage is not a trustworthy audit record or confidential storage. The D1 
 
 Initial data derives from the [NIOSH Pocket Guide: ethanol](https://www.cdc.gov/niosh/npg/npgd0262.html), [acetone](https://www.cdc.gov/niosh/npg/npgd0004.html), [sodium hydroxide](https://www.cdc.gov/niosh/npg/npgd0565.html), and [hydrogen peroxide](https://www.cdc.gov/niosh/npg/npgd0335.html). Summaries are limited reference excerpts/paraphrases, not a substitute for the current supplier SDS or laboratory procedures.
 
-No deployment has been performed. See `docs/cloudflare.md` for exact setup steps.
+See [Cloudflare setup](docs/cloudflare.md) for binding configuration and deployed frontend verification.

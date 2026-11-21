@@ -31,62 +31,22 @@ export function listLocalRequests(): LocalRequest[] {
     );
   return parsed.data;
 }
-export function saveLocalRequest(
-  input: RequestInput,
-  mode: "draft" | "demo",
-): LocalRequest {
-  requestInputSchema.parse(input);
+export function saveLocalRequest(input: RequestInput): LocalRequest {
   const at = new Date().toISOString();
   const request: LocalRequest = {
-    ...input,
+    ...requestInputSchema.parse(input),
     id: crypto.randomUUID(),
     createdAt: at,
     status: "Draft",
-    mode,
+    mode: "draft",
     history: [
       {
         status: "Draft",
         at,
-        note:
-          mode === "demo"
-            ? "DEMO — stored only in this browser; never submitted."
-            : "Local draft saved in this browser.",
+        note: "Local draft saved in this browser.",
       },
     ],
   };
   localStorage.setItem(KEY, JSON.stringify([request, ...listLocalRequests()]));
   return request;
-}
-export async function runDemo(
-  id: string,
-  onUpdate: () => void,
-  fail = false,
-): Promise<void> {
-  const steps = fail
-    ? (["Submitted", "Failed"] as const)
-    : ([
-        "Submitted",
-        "Identifying Chemicals",
-        "Analyzing",
-        "Awaiting Administrator Review",
-      ] as const);
-  for (const status of steps) {
-    await new Promise((resolve) => setTimeout(resolve, 850));
-    const list = listLocalRequests();
-    const r = list.find((v) => v.id === id);
-    if (!r || r.mode !== "demo") return;
-    r.status = status;
-    r.history.push({
-      status,
-      at: new Date().toISOString(),
-      note:
-        status === "Failed"
-          ? "DEMO — simulated service failure. No analysis performed."
-          : status === "Awaiting Administrator Review"
-            ? "DEMO — review placeholder only; no administrator was contacted."
-            : "DEMO — workflow animation only. No external services called.",
-    });
-    localStorage.setItem(KEY, JSON.stringify(list));
-    onUpdate();
-  }
 }

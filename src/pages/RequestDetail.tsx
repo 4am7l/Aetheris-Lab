@@ -12,7 +12,7 @@ export default function RequestDetail() {
   if (q.isError)
     return (
       <div className="page">
-        <Notice kind="error">{q.error.message}</Notice>
+        <Notice kind="error">{t("draftsUnavailable")}</Notice>
       </div>
     );
   const r = q.data.find((v) => v.id === id);
@@ -39,20 +39,10 @@ export default function RequestDetail() {
         {t("back")} · {t("requests")}
       </Link>
       <PageHeading
-        eyebrow={r.mode === "demo" ? t("demoOnly") : t("notSubmitted")}
-        title={
-          r.status === "Awaiting Administrator Review"
-            ? t("awaiting")
-            : r.status === "Draft"
-              ? t("saved")
-              : r.status
-        }
+        eyebrow={t("notSubmitted")}
+        title={t(r.mode === "demo" ? "legacyPreview" : "saved")}
         description={t("noVerdict")}
       />
-      <Notice kind="warning">
-        {r.mode === "demo" ? t("demoOnly") : t("notSubmitted")}.{" "}
-        {t("realDisabled")}
-      </Notice>
       <div className="panel request-metadata">
         <div>
           <span>{t("requestId")}</span>
@@ -68,7 +58,7 @@ export default function RequestDetail() {
         </div>
         <div>
           <span>{t("status")}</span>
-          <strong>{r.status}</strong>
+          <strong>{t(r.mode === "demo" ? "legacyPreview" : "draft")}</strong>
         </div>
         <div>
           <span>{t("completion")}</span>
@@ -110,31 +100,33 @@ export default function RequestDetail() {
         <h2>{t("conditions")}</h2>
         <p className="preserve-lines">{r.conditions || t("unknown")}</p>
       </section>
-      <section className="panel timeline-panel">
-        <h2>{t("history")}</h2>
-        <ol className="timeline">
-          {r.history.map((h, i) => (
-            <li key={i}>
-              <span className="timeline-node">
-                <Icon
-                  name={
-                    i === r.history.length - 1
-                      ? "radio_button_checked"
-                      : "check"
-                  }
-                />
-              </span>
-              <div>
-                <h3>{h.status}</h3>
-                <time>
-                  {new Date(h.at).toLocaleString(document.documentElement.lang)}
-                </time>
-                <p>{h.note}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
+      {r.mode === "draft" && (
+        <section className="panel timeline-panel">
+          <h2>{t("history")}</h2>
+          <ol className="timeline">
+            {r.history.map((h, i) => (
+              <li key={i}>
+                <span className="timeline-node">
+                  <Icon
+                    name={
+                      i === r.history.length - 1
+                        ? "radio_button_checked"
+                        : "check"
+                    }
+                  />
+                </span>
+                <div>
+                  <h3>{h.status}</h3>
+                  <time>
+                    {new Date(h.at).toLocaleString(document.documentElement.lang)}
+                  </time>
+                  <p>{h.note}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
       <div className="result-locked">
         <Icon name="lock" />
         <h2>{t("noVerdict")}</h2>

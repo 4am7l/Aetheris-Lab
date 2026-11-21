@@ -1,14 +1,17 @@
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { SolutionCard, type ImageAttachment } from "../components/SolutionCard";
 import type { Solution } from "../domain";
-import { runDemo, saveLocalRequest } from "../services/local";
-import { Icon, Notice } from "../ui";
+import { saveLocalRequest } from "../services/local";
+import { RequestError, submitRequest } from "../services/publicRequests";
+import { useRetryDelay } from "../services/useRetryDelay";
+import { Icon, Modal, Notice } from "../ui";
 import { useText } from "../text";
 import PageHeading from "../components/PageHeading";
+
 export default function Analysis() {
   const t = useText();
   const location = useLocation();
@@ -19,9 +22,21 @@ export default function Analysis() {
   const [imageA, setImageA] = useState<ImageAttachment | null>(null);
   const [imageB, setImageB] = useState<ImageAttachment | null>(null);
   const [conditions, setConditions] = useState("");
-  const [fail, setFail] = useState(false);
-  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<RequestError>();
+  const [confirmRetry, setConfirmRetry] = useState(false);
+  const [draftError, setDraftError] = useState(false);
+  const inFlight = useRef(false);
+  const active = useRef(false);
+  const cooldown = useRetryDelay(failure?.retryAt ?? 0);
   const method = new URLSearchParams(location.search).get("method");
+
+  useEffect(() => {
+    active.current = location.pathname === "/analysis";
+    return () => {
+      active.current = false;
+    };
+  }, [location.pathname]);
   useEffect(
     () => () => {
       if (imageA) URL.revokeObjectURL(imageA.url);
@@ -34,131 +49,147 @@ export default function Analysis() {
     },
     [imageB],
   );
-  function save(mode: "draft" | "demo") {
-    if (!a || !b) return;
+
+  function saveDraft() {
+    if (!a || !b || inFlight.current) return;
     try {
-      const imageNotes = [
-        imageA
-          ? `A image selected: ${imageA.file.name} (not persisted or uploaded)`
-          : "",
-        imageB
-          ? `B image selected: ${imageB.file.name} (not persisted or uploaded)`
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-      const r = saveLocalRequest(
-        {
-          a,
-          b,
-          conditions: [conditions, imageNotes].filter(Boolean).join("\n"),
-        },
-        mode,
-      );
+      const draft = saveLocalRequest({ a, b, conditions });
       void client.invalidateQueries({ queryKey: ["requests"] });
-      navigate(`/requests/${r.id}`);
-      if (mode === "demo")
-        void runDemo(
-          r.id,
-          () => {
-            void client.invalidateQueries({ queryKey: ["requests"] });
-          },
-          fail,
-        ).catch(() => {
-          void client.invalidateQueries({ queryKey: ["requests"] });
-        });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("localDataError"));
+      navigate("/requests/" + draft.id);
+    } catch {
+      setDraftError(true);
     }
   }
+
+  async function submit() {
+    if (!a || !b || inFlight.current || cooldown) return;
+    // Lock synchronously before React renders the disabled button.
+    inFlight.current = true;
+    setConfirmRetry(false);
+    setPending(true);
+    setFailure(undefined);
+    setDraftError(false);
+    try {
+      const id = await submitRequest({ a, b, conditions });
+      if (active.current)
+        navigate("/requests/" + id + "/receipt", { replace: true });
+    } catch (error) {
+      inFlight.current = false;
+      if (active.current) {
+        setFailure(
+          error instanceof RequestError
+            ? error
+            : new RequestError("unconfirmed"),
+        );
+        setPending(false);
+      }
+    }
+  }
+
   return (
     <div className="page">
-      <PageHeading
-        eyebrow={t("steps")}
-        title={t("newAnalysis")}
-        description={t("analysisIntro")}
-      />
+      <PageHeading title={t("newAnalysis")} description={t("analysisIntro")} />
       <Notice kind="warning">
         <strong>{t("review")}</strong> {t("reviewText")}
       </Notice>
-      <div className="solutions-grid">
-        <SolutionCard
-          letter="A"
-          value={a}
-          onChange={setA}
-          image={imageA}
-          onImage={setImageA}
-          initialMethod={method}
-        />
-        <div className="pair-connector">
-          <Icon name="add" />
+      <fieldset className="request-fields" disabled={pending}>
+        <div className="solutions-grid">
+          <SolutionCard
+            letter="A"
+            value={a}
+            onChange={setA}
+            image={imageA}
+            onImage={setImageA}
+            initialMethod={method}
+          />
+          <div className="pair-connector">
+            <Icon name="add" />
+          </div>
+          <SolutionCard
+            letter="B"
+            value={b}
+            onChange={setB}
+            image={imageB}
+            onImage={setImageB}
+          />
         </div>
-        <SolutionCard
-          letter="B"
-          value={b}
-          onChange={setB}
-          image={imageB}
-          onImage={setImageB}
-        />
-      </div>
-      <section className="panel context-panel">
-        <TextField
-          fullWidth
-          multiline
-          rows={3}
-          label={t("conditions")}
-          value={conditions}
-          onChange={(e) => setConditions(e.target.value)}
-          placeholder={t("conditionsHint")}
-          slotProps={{ htmlInput: { maxLength: 2500 } }}
-        />
-        <p className="small muted">{t("unknownFields")}</p>
-      </section>
-      <section className="submission-panel">
+        <section className="panel context-panel">
+          <TextField
+            fullWidth
+            multiline
+            rows={3}
+            label={t("conditions")}
+            value={conditions}
+            onChange={(e) => setConditions(e.target.value)}
+            placeholder={t("conditionsHint")}
+            slotProps={{ htmlInput: { maxLength: 3000 } }}
+          />
+          <p className="small muted">{t("unknownFields")}</p>
+        </section>
+      </fieldset>
+      <section className="submission-panel" aria-busy={pending}>
         <div>
-          <h3>{t("analyzeCompatibility")}</h3>
-          <p>{t("realDisabled")}</p>
+          <h3>{t("submitRequest")}</h3>
+          <p>{t("submissionNotice")}</p>
         </div>
-        <Button disabled variant="contained">
-          <Icon name="lock" />
-          {t("analyzeCompatibility")}
+        <Button
+          variant="contained"
+          disabled={!a || !b || pending || cooldown}
+          onClick={() =>
+            failure?.code === "unconfirmed"
+              ? setConfirmRetry(true)
+              : void submit()
+          }
+        >
+          {pending
+            ? t("submitting")
+            : failure
+              ? t("retry")
+              : t("submitRequest")}
         </Button>
       </section>
+      <span role="status" className="sr-only">
+        {pending && t("submitting")}
+      </span>
+      {failure && (
+        <Notice kind="error">
+          {failure.code === "unconfirmed"
+            ? t("submissionUnconfirmed")
+            : failure.code === "rateLimited"
+              ? t(cooldown ? "rateLimited" : "retryAvailable")
+              : failure.code === "validation"
+                ? t("submissionInvalid")
+                : t("submissionRejected")}
+        </Notice>
+      )}
       <div className="local-actions">
-        <div>
-          <p>{t("localNotice")}</p>
-          <details className="demo-options">
-            <summary>{t("demoOptions")}</summary>
-            <label className="check-field">
-              <input
-                type="checkbox"
-                checked={fail}
-                onChange={(e) => setFail(e.target.checked)}
-              />
-              {t("simulateFailure")}
-            </label>
-          </details>
-        </div>
-        <div className="button-row">
-          <Button
-            variant="outlined"
-            disabled={!a || !b}
-            onClick={() => save("draft")}
-          >
-            <Icon name="save" />
-            {t("saveDraft")}
-          </Button>
-          <Button
-            variant="text"
-            disabled={!a || !b}
-            onClick={() => save("demo")}
-          >
-            <Icon name="play_circle" />
-            {t("demoRun")}
-          </Button>
-        </div>
+        <p>{t("localNotice")}</p>
+        <Button
+          variant="outlined"
+          disabled={!a || !b || pending}
+          onClick={saveDraft}
+        >
+          <Icon name="save" />
+          {t("saveDraft")}
+        </Button>
       </div>
-      {error && <Notice kind="error">{error}</Notice>}
+      {draftError && <Notice kind="error">{t("localDataError")}</Notice>}
+      {confirmRetry && (
+        <Modal
+          title={t("retrySubmission")}
+          onClose={() => setConfirmRetry(false)}
+        >
+          <p>{t("submissionUnconfirmed")}</p>
+          <div className="button-row">
+            <Button onClick={() => setConfirmRetry(false)}>
+              {t("cancel")}
+            </Button>
+            <Button variant="contained" onClick={() => void submit()}>
+              {t("submitAgain")}
+            </Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

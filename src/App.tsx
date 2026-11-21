@@ -24,6 +24,7 @@ const Library = lazy(() => import("./pages/Library"));
 const ChemicalDetail = lazy(() => import("./pages/ChemicalDetail"));
 const Requests = lazy(() => import("./pages/Requests"));
 const RequestDetail = lazy(() => import("./pages/RequestDetail"));
+const Receipt = lazy(() => import("./pages/Receipt"));
 const About = lazy(() => import("./pages/About"));
 const nav = [
   ["/", "home", "space_dashboard"],
@@ -144,8 +145,7 @@ export default function App() {
                 <div className="sidebar-bottom">
                   <div className="local-indicator">
                     <span className="dot" />
-                    {t("localMode")}
-                    <span className="version">v0.1</span>
+                    {t("workspaceLabel")}
                   </div>
                 </div>
               </aside>
@@ -238,6 +238,10 @@ export default function App() {
                             path="/requests/:id"
                             element={<RequestDetail />}
                           />
+                          <Route
+                            path="/requests/:id/receipt"
+                            element={<Receipt />}
+                          />
                           <Route path="/about" element={<About />} />
                           <Route
                             path="*"
@@ -258,7 +262,7 @@ export default function App() {
                     <Icon name="science" /> Aetheris Lab
                   </span>
                   <span>{t("footer")}</span>
-                  <span className="small">{t("demo")} · v0.1</span>
+                  <span className="small">v0.1</span>
                 </footer>
               </div>
             </div>

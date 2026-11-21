@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Button from "@mui/material/Button";
 import Paper from "@mui/material/Paper";
 import { listLocalRequests } from "../services/local";
+import { useReceipts } from "../services/useReceipts";
 import { Icon, Notice } from "../ui";
 import { useText } from "../text";
 import RequestList from "../components/RequestList";
@@ -15,6 +16,7 @@ export default function Home() {
     queryKey: ["requests"],
     queryFn: listLocalRequests,
   });
+  const { receipts } = useReceipts();
   return (
     <div className="page home-page">
       <div className="workspace-heading">
@@ -95,12 +97,12 @@ export default function Home() {
             {t("viewAll")}
           </Button>
         </div>
-        {recent.isPending ? (
+        {(receipts.length > 0 || recent.data?.length) ? (
+          <RequestList requests={recent.data ?? []} receipts={receipts} limit={3} />
+        ) : recent.isPending ? (
           <div className="skeleton" />
         ) : recent.isError ? (
-          <Notice kind="error">{recent.error.message}</Notice>
-        ) : recent.data.length ? (
-          <RequestList requests={recent.data.slice(0, 3)} />
+          <Notice kind="error">{t("draftsUnavailable")}</Notice>
         ) : (
           <div className="recent-empty">
             <Icon name="assignment" />

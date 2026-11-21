@@ -104,6 +104,38 @@ export const requestInputSchema = z.object({
   conditions: z.string().max(3000),
 });
 export type RequestInput = z.infer<typeof requestInputSchema>;
+const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+export const publicSolutionSchema = solutionSchema.strict().superRefine((value, ctx) => {
+  for (const field of ["concentration", "quantity", "temperature"] as const) {
+    if (value[field] !== unknown && !decimal.test(value[field])) {
+      ctx.addIssue({ code: "custom", path: [field], message: "Expected a decimal value." });
+    }
+  }
+  if (value.quantity !== unknown && value.quantityUnit === unknown) {
+    ctx.addIssue({ code: "custom", path: ["quantityUnit"], message: "Choose a quantity unit." });
+  }
+});
+export const publicInputSchema = requestInputSchema.strict().extend({
+  a: publicSolutionSchema,
+  b: publicSolutionSchema,
+});
+
+export const publicRequestPath = "/api/requests";
+export const publicRequestMaxBytes = 32 * 1024;
+export const publicRequestIdSchema = z.uuidv4();
+export const publicReceiptSchema = z.object({
+  id: publicRequestIdSchema,
+  status: z.literal("Submitted"),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+export const trackingTokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const createdReceiptSchema = publicReceiptSchema.extend({
+  trackingToken: trackingTokenSchema,
+});
+export type PublicReceipt = z.infer<typeof publicReceiptSchema>;
+export type CreatedReceipt = z.infer<typeof createdReceiptSchema>;
+
 export const localRequestSchema = requestInputSchema.extend({
   id: z.string().uuid(),
   createdAt: z.iso.datetime(),

@@ -1,6 +1,6 @@
 # Cloudflare deployment preparation
 
-The Worker supports accountless public intake and tracking using D1. Each public receipt reports the `Submitted` state. Identification, analysis, and review integrations remain disabled. The frontend runs independently of the Worker.
+The Worker supports accountless public intake and tracking using D1. Each public receipt reports the `Submitted` state. Identification, analysis, and review integrations remain disabled. The frontend calls relative `/api` URLs through a Pages Function and a Cloudflare service binding.
 
 ## 1. Verify the source
 
@@ -15,15 +15,33 @@ npm run build
 
 ## 2. Frontend with Pages
 
-In Cloudflare Dashboard → Workers & Pages → Create → Pages → Connect to Git, select `4am7l/Aetheris-Lab` and the intended branch. Set framework Vite, root `/`, build command `npm run build`, output `dist`, and Node version 22.12+ (or the validated Node 26). No frontend secrets are needed; optional `VITE_APP_MODE=local-demo` is informational only. Approve deployment only after account/domain settings are ready. Alternatively, after authorization:
+In Cloudflare Dashboard → Workers & Pages, select the existing Aetheris Lab Pages project for `4am7l/Aetheris-Lab`. For a new staging project, connect the intended Git branch, set framework Vite, root `/`, build command `npm run build`, output `dist`, and Node version 22.12+ (or the validated Node 26). Build from the repository root so Pages finds `functions/` next to `dist/`.
 
-```sh
-npx wrangler login
-npx wrangler pages project create aetheris-lab
-npx wrangler pages deploy dist --project-name aetheris-lab
-```
+In **Settings → Bindings → Add → Service binding**, set the variable name to `AETHERIS_API`. Select `aetheris-lab-api` for the production Pages environment. Its public endpoint is `https://aetheris-lab-api.4am7l.workers.dev`, but the browser reaches it through the binding. For Pages Preview, bind a staging Worker with a separate D1 database. Leave Preview unbound when no staging Worker is available. An unbound API returns `503`. Redeploy the chosen Pages environment after the binding and code are approved.
 
-The bundled `_redirects` handles SPA deep links; `_headers` sets MIME, referrer, camera and CSP policies. The CSP currently permits only same-origin connections. Extend `connect-src` to the configured backend origin only when the client transport is implemented, or use a same-origin `/api/*` Worker route. When self-hosting fonts, tighten font/style sources accordingly.
+The bundled `_routes.json` invokes Functions only on `/api/*`. The function forwards `/api/health`, `/api/requests`, and `/api/requests/:id`. Pages serves frontend deep links through its default SPA fallback. Browser requests stay on the Pages origin and keep the existing `connect-src 'self'` policy. This frontend release needs only the Pages binding. Keep request bodies, response bodies, and Authorization headers out of application logs and analytics. Set Pages Functions to fail closed so API routes cannot fall through to the static site when a Functions allowance is exhausted.
+
+[Cloudflare Pages service binding setup](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)
+
+### Verify the deployed frontend
+
+Use the staging Pages URL as `https://<pages-origin>` for write tests. The production frontend is `https://aetheris-lab.pages.dev`. A submission creates a D1 row in whichever environment its binding selects, so get approval for a production test submission before running the write steps there.
+
+1. Open `https://<pages-origin>/api/health`. Expect `200`, `submission: true`, `tracking: true`, `identification: false`, and `review: false`.
+2. Open `/analysis`. Choose **Enter manually** for each solution, enter `Sample A` and `Sample B`, and confirm each. Leave the remaining values at **Unknown** or blank as allowed. Add optional conditions and click **Submit request** twice quickly. In the browser Network panel, expect one same-origin `POST /api/requests` with status `201`.
+3. The **Submission receipt** should show `Submitted`, a request ID, and a creation timestamp. Expect a same-origin `GET /api/requests/<id>` with status `200`. Refresh the route and reopen the receipt from **My Requests** using the same browser profile. Scientific results should remain locked.
+4. Use the displayed request ID in the read-only command below. Expect `404` for the deliberately invalid bearer value. Open the receipt URL in a private window and confirm the page reports that the receipt is unavailable.
+
+   ```sh
+   curl -i 'https://<pages-origin>/api/requests/<id>' \
+     -H 'Authorization: Bearer invalid-test-token'
+   ```
+
+5. In the original browser, select **Remove tracking access** and confirm. Confirm that the receipt disappears from **My Requests** and that reopening its URL reports unavailable. This removes the browser credential and leaves the submitted row in D1.
+
+6. Repeat the form and receipt checks in Arabic and on a narrow viewport. For failure and throttling checks, use `npm test` or an isolated staging Worker. The UI waits for `Retry-After` on `429`. A lost submission response can conceal a successful write, so a retry requires explicit confirmation. The Worker does not support idempotency keys.
+
+For local development, follow the [README](../README.md#run-locally). Vite proxies `/api/` requests to the local Worker on port `8787`.
 
 ## 3. Configure Worker bindings and migrations
 
