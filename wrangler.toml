@@ -2,7 +2,7 @@ name = "aetheris-lab-api"
 main = "worker/index.ts"
 compatibility_date = "2026-11-20"
 workers_dev = false
-
+# Trigger Cloudflare deployment
 # Replace these placeholders before deployment. No resources are provisioned automatically.
 [[d1_databases]]
 binding = "DB"
@@ -13,3 +13,5 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "IMAGES"
 bucket_name = "aetheris-lab-private-images"
+
+# Trigger Cloudflare deployment
