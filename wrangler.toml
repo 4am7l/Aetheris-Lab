@@ -1,7 +1,7 @@
 name = "aetheris-lab-api"
 main = "worker/index.ts"
 compatibility_date = "2026-11-20"
-workers_dev = false
+workers_dev = true
 # Trigger Cloudflare deployment
 # Replace these placeholders before deployment. No resources are provisioned automatically.
 [[d1_databases]]
