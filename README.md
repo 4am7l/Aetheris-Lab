@@ -1,10 +1,11 @@
 # Aetheris Lab
 
-A React + TypeScript scientific workspace for documenting two solutions and preparing chemical compatibility questions for independent expert review. **No AI services, real submissions, administrator approvals, or scientific verdicts are simulated.** An explicit demo animates lifecycle statuses only and stops at a review placeholder.
+A React + TypeScript scientific workspace for documenting two solutions and preparing chemical compatibility questions for independent expert review. The Cloudflare Worker accepts public submissions and provides token-protected receipts. The frontend demo runs locally and stops at a review placeholder.
 
 ## Run locally
 
 Requirements: Node 22.12+ (Node 26 used for validation) and npm.
+The Worker tests use Node's built-in SQLite module. On Node 22.12, enable it with `NODE_OPTIONS=--experimental-sqlite` or run the checks with Node 26, as CI does.
 
 ```sh
 npm ci
@@ -31,7 +32,8 @@ npm test
 - Camera preview, capture, retake, stream cleanup, denial/error handling, upload fallback, image preview/removal, JPEG/PNG/WebP and 10 MB validation. Camera images are resized to a maximum width of 2000 px. Images are never uploaded or persisted; they last only during the analysis page session.
 - Four actual NIOSH substance records checked 2026-11-20; indexed name, alias, ASCII formula/subscript normalization, CAS and category search. No invented records, GHS claims, or solution-specific conclusions.
 - Validated browser-local drafts and demo workflow records, timestamps, audit-style history, JSON download, storage-error handling. Demo can exercise a service failure. It never contacts a reviewer or produces a scientific assessment.
-- Strongly typed service contracts; future evidence orchestrator with identity lookup, safety retrieval and review submission; fail-closed Worker skeleton, D1 migration, private R2 binding preparation.
+- Public intake and token-protected tracking in the Worker, with rate limiting and D1 storage. See [Cloudflare setup and API contract](docs/cloudflare.md).
+- Typed integration contracts, a future evidence orchestrator, and preparation for private R2 storage.
 - Real Analyze Compatibility is intentionally disabled. Local request schema explicitly excludes Approved. Local data can never unlock a final result.
 
 ## Project map
@@ -46,18 +48,19 @@ npm test
 | `src/data/chemicals.ts`           | Small source-linked catalog                                        |
 | `src/services/contracts.ts`       | Provider and Admin integration interfaces                          |
 | `src/services/local.ts`           | Local-only repository and explicit demo provider                   |
-| `worker/index.ts`                 | Nonoperational API routes returning 503; health endpoint           |
+| `worker/index.ts`                 | Public intake, receipt lookup, and health endpoint                 |
 | `worker/orchestrator.ts`          | Dependency-injected, server-only future agent pipeline             |
 | `worker/publication.ts`           | Deny-by-default final-result publication predicate                 |
 | `migrations/0001_initial.sql`     | Requests, private assessments, reviews, images, append-only events |
+| `migrations/0002_public_request_tracking.sql` | Public receipts and SHA-256 tracking-token digests |
 | `docs/admin-review.md`            | Secure review protocol and publication requirements                |
 | `docs/cloudflare.md`              | Cloudflare setup and deployment instructions                       |
 
 ## Integration status and remaining work
 
-No real provider or authenticated server repository is implemented. The Worker deliberately returns **503** for request/image/result/review APIs, including requests containing forged review headers. Changing an environment variable cannot turn this preview into a trusted application.
+Public submissions can be sent directly to the Worker API. The React frontend still uses browser-local drafts and the explicit demo. The Worker returns **503** for image, result, and review integrations.
 
-Before enabling production submission: implement end-user authentication and owner-scoped D1 access, server-enforced lifecycle transitions and idempotency, identity and current SDS providers, an evidence-constrained AI provider, durable orchestration/queue retries, private image upload validation and R2 delivery, authenticated Aetheris Admin delivery/callbacks, signed review verification, replay protection, rate limits, limits on agent egress/tool use, retention/deletion policies and monitoring. Add the authenticated read API and wire `ApprovedResultPanel` only when those controls are operational. The current request route has only the locked results screen; the future result presentation component, final-result contract and server publication validation are prepared but cannot be activated by browser storage or a URL parameter.
+The future analysis and review workflow requires server-enforced lifecycle transitions and idempotency, identity and current SDS providers, an evidence-constrained analysis provider, durable orchestration, private R2 delivery, authenticated Aetheris Admin integration, signed review verification, replay protection, retention and monitoring. Enable `ApprovedResultPanel` only after authenticated access and verified final-result publication are implemented.
 
 The orchestrator is an architectural implementation with injected dependencies, not a running AI system. It never exposes preliminary content to the frontend. Before connecting it, constrain reference domains; parse documents as untrusted data; validate extracted fields independently; disallow instructions in label/SDS text from changing tool permissions, request identity, review state or system policies. Do not send secrets or personal data into prompts.
 

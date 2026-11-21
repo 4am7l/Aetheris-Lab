@@ -4,6 +4,8 @@ This protocol is preparation for a separate application. No operational review e
 
 ## Future server endpoints
 
+The [public intake API](cloudflare.md#public-request-api) accepts submissions and returns receipt metadata using a tracking token. The owner-scoped analysis and publication behaviors in this table are future requirements.
+
 | Method/path                              | Required behavior                                                                                                                                         |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | POST `/api/requests`                     | Authenticated owner, strict `RequestInput` schema, bounded body, idempotency key; server generates UUID/timestamp/status; reject approval/reviewer fields |

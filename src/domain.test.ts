@@ -141,7 +141,7 @@ describe("server approval gate", () => {
         publishableResult({ ...context, ...patch } as VerifiedReviewContext),
       ).toBeNull();
   });
-  it("does not accept approval headers or POST payloads on unconfigured routes", async () => {
+  it("does not accept approval headers or POST payloads on the admin route", async () => {
     const response = await worker.fetch(
       new Request("https://local/api/admin/reviews", {
         method: "POST",
@@ -151,10 +151,5 @@ describe("server approval gate", () => {
       {} as never,
     );
     expect(response.status).toBe(503);
-    const submit = await worker.fetch(
-      new Request("https://local/api/requests", { method: "POST" }),
-      {} as never,
-    );
-    expect(submit.status).toBe(503);
   });
 });
