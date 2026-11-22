@@ -108,6 +108,17 @@ it("navigates between reviews and through browser history", async () => {
   fireEvent.click(screen.getByRole("button", { name: "History forward" }));
   expect(await screen.findByText("second detail")).toBeTruthy();
 });
+it("opens reviews and restores the queue when scrollTo returns a promise", async () => {
+  const scrollTo = vi.mocked(window.scrollTo).mockImplementation(() => Promise.resolve());
+  mount();
+  fireEvent.click(await screen.findByRole("link", { name: /first chemical/ }));
+  expect(await screen.findByText("first detail")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "History back" }));
+  expect(await screen.findByRole("link", { name: /first chemical/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "History forward" }));
+  expect(await screen.findByText("first detail")).toBeTruthy();
+  expect(scrollTo).toHaveBeenCalledWith(0, 0);
+});
 it("cancels the abandoned review and ignores its late response", async () => {
   const pending = deferred();
   const signals: AbortSignal[] = [];

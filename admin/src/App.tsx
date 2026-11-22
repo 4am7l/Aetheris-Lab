@@ -134,7 +134,10 @@ export default function App() {
     if (theme) storePreference("aetheris.theme", theme);
   }, [language, rtl, mode, theme]);
 
-  useEffect(() => window.scrollTo(0, 0), [pathname]);
+  useEffect(() => {
+    // Some browsers return a promise from scrollTo, which is not an effect cleanup.
+    window.scrollTo(0, 0);
+  }, [pathname]);
 
   return (
     <CacheProvider value={rtl ? rtlCache : ltrCache}>
