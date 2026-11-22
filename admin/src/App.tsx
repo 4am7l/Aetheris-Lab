@@ -189,6 +189,7 @@ export default function App() {
                     <Routes>
                       <Route path="/" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
                       <Route path="/requests/:id" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
+                      <Route path="/reviews/:id" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
                       <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                   </>
