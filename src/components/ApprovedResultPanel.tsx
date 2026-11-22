@@ -1,78 +1,50 @@
 import { useText } from "../text";
-import type { ApprovedResult, Solution } from "../domain";
+import type { PublicResult } from "../domain";
+import { resultLabel } from "../reviewText";
 import { Icon, Notice } from "../ui";
-// Future authenticated server-read presentation only. Never import local/demo data here.
-// The server must enforce publication.ts and ownership before returning this object.
-export function ApprovedResultPanel({
-  result,
-  a,
-  b,
-}: {
-  result: ApprovedResult;
-  a: Solution;
-  b: Solution;
-}) {
+
+export function ApprovedResultPanel({ result }: { result: PublicResult }) {
   const t = useText();
   return (
     <section className="approved-result panel">
-      <span className="eyebrow">EXPERT-REVIEWED RESULT</span>
-      <h2>{result.classification}</h2>
-      <p>
-        {a.name} + {b.name}
-      </p>
+      <span className="eyebrow">{t("expertResult")}</span>
+      <h2>{t(resultLabel[result.classification])}</h2>
       <Notice kind="warning">{t("approval")}</Notice>
       <div className="detail-grid">
         <section>
-          <h3>Documented conditions</h3>
-          <p>{result.conditions}</p>
+          <h3>{t("documentedConditions")}</h3>
+          <p dir="auto">{result.conditions}</p>
         </section>
-        <section>
-          <h3>{t("hazards")}</h3>
-          <ul>
-            {result.hazards.map((h) => (
-              <li key={h}>{h}</li>
-            ))}
-          </ul>
-        </section>
-        <section>
-          <h3>{t("incompatibilities")}</h3>
-          <ul>
-            {result.incompatibilities.map((h) => (
-              <li key={h}>{h}</li>
-            ))}
-          </ul>
-        </section>
+        {([[result.hazards, "hazards"], [result.incompatibilities, "incompatibilities"]] as const)
+          .filter(([items]) => items.length > 0).map(([items, key]) => (
+            <section key={key}>
+              <h3>{t(key)}</h3>
+              <ul>{items.map((item, index) => <li key={index} dir="auto">{item}</li>)}</ul>
+            </section>
+          ))}
         <section>
           <h3>{t("storage")}</h3>
-          <p>{result.storage}</p>
-          <p>{result.container}</p>
+          <p dir="auto">{result.storage}</p>
+          <p dir="auto">{result.container}</p>
         </section>
       </div>
-      <h3>Limitations</h3>
-      <ul>
-        {result.limitations.map((l) => (
-          <li key={l}>{l}</li>
-        ))}
-      </ul>
+      <h3>{t("limitations")}</h3>
+      <ul>{result.limitations.map((item, index) => <li key={index} dir="auto">{item}</li>)}</ul>
       <h3>{t("references")}</h3>
       <ul>
-        {result.sources.map((s) => (
-          <li key={s.url}>
-            <a
-              className="text-link"
-              href={s.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {s.title}
-              <Icon name="open_in_new" />
+        {result.sources.map(({ url, title }) => (
+          <li key={url}>
+            <a className="text-link" href={url} target="_blank" rel="noreferrer">
+              <bdi>{title}</bdi> <Icon name="open_in_new" />
             </a>
           </li>
         ))}
       </ul>
       <p className="small muted">
-        Reviewer: {result.reviewerId} ·{" "}
-        {new Date(result.reviewedAt).toLocaleString()}
+        {t("reviewedAt")}{" "}
+        <time dateTime={result.reviewedAt}>
+          {new Date(result.reviewedAt).toLocaleString(document.documentElement.lang || undefined)}
+        </time>
       </p>
     </section>
   );

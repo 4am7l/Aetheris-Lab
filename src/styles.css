@@ -2010,3 +2010,109 @@ footer {
   min-height: 36px;
   padding: 6px 12px;
 }
+
+.admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.admin-toolbar .MuiTextField-root {
+  flex: 1 1 220px;
+}
+
+.admin-section,
+.admin-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.admin-section :is(h2, h3, p) {
+  margin-block: 0 6px;
+  overflow-wrap: anywhere;
+}
+
+.admin-section p[dir="auto"] {
+  white-space: pre-wrap;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.admin-fields {
+  margin: 0;
+}
+
+.admin-fields > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 8px;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.admin-fields dt {
+  color: var(--muted);
+}
+
+.admin-fields dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.admin-photo {
+  margin: 0;
+}
+
+.admin-photo img {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: var(--soft);
+}
+
+.admin-evidence {
+  margin-block-start: 10px;
+  padding: 14px;
+  background: var(--soft);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+
+.admin-evidence p {
+  margin-block: 6px;
+}
+
+.admin-choices {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-choices .MuiFormControlLabel-root {
+  margin-inline: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-history {
+  margin: 0;
+  padding-inline-start: 24px;
+  overflow-wrap: anywhere;
+}
+
+.admin-history li + li {
+  margin-block-start: 8px;
+}
+
+@media (max-width: 640px) {
+  .admin-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

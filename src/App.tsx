@@ -25,6 +25,7 @@ const ChemicalDetail = lazy(() => import("./pages/ChemicalDetail"));
 const Requests = lazy(() => import("./pages/Requests"));
 const RequestDetail = lazy(() => import("./pages/RequestDetail"));
 const Receipt = lazy(() => import("./pages/Receipt"));
+const Admin = lazy(() => import("./pages/Admin"));
 const About = lazy(() => import("./pages/About"));
 const nav = [
   ["/", "home", "space_dashboard"],
@@ -242,6 +243,8 @@ export default function App() {
                             path="/requests/:id/receipt"
                             element={<Receipt />}
                           />
+                          <Route path="/admin" element={<Admin />} />
+                          <Route path="/admin/requests/:id" element={<Admin />} />
                           <Route path="/about" element={<About />} />
                           <Route
                             path="*"

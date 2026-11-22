@@ -1,10 +1,14 @@
-# Worker-only secrets; copy to .dev.vars. Never use VITE_ for secrets.
-CHEMICAL_IDENTITY_API_URL=
-CHEMICAL_IDENTITY_API_KEY=
-SAFETY_DATA_API_URL=
-SAFETY_DATA_API_KEY=
+# Worker environment. Copy to .dev.vars for local development.
+# Enable the scheduled evidence checks for this environment.
+AGENT_ENABLED=false
+
+# Optional provider. A missing key leaves evidence collection available without AI output.
+AI_PROVIDER=
+AI_MODEL=
 AGENT_API_KEY=
-ADMIN_REVIEW_API_URL=
-ADMIN_REVIEW_SERVICE_TOKEN=
+
+# Optional admin configuration. All four are required to enable reviewer access.
+ADMIN_ORIGIN=
 CF_ACCESS_TEAM_DOMAIN=
 CF_ACCESS_AUD=
+REVIEWER_EMAILS=

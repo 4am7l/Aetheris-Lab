@@ -20,7 +20,8 @@ export async function onRequest({ request, env }: Context) {
   const { origin, pathname } = new URL(request.url);
   if (
     pathname !== "/api/health" &&
-    !/^\/api\/requests(?:\/[^/]+)?$/.test(pathname)
+    !/^\/api\/requests(?:\/[^/]+)?$/.test(pathname) &&
+    !/^\/api\/admin\/(?:session|requests(?:\/[^/]+(?:\/(?:decision|retry|images\/[^/]+))?)?)$/.test(pathname)
   ) {
     return error("NOT_FOUND", 404);
   }

@@ -1,16 +1,13 @@
 import {
   createdReceiptSchema,
   type CreatedReceipt,
-  type PublicReceipt,
 } from "../domain";
 
 const prefix = "aetheris.receipt.v1.";
 const temporary = new Map<string, CreatedReceipt>();
 const listeners = new Set<() => void>();
 
-interface SavedReceipt extends PublicReceipt {
-  persistent: boolean;
-}
+type SavedReceipt = Omit<CreatedReceipt, "trackingToken"> & { persistent: boolean };
 
 interface ReceiptSnapshot {
   receipts: SavedReceipt[];

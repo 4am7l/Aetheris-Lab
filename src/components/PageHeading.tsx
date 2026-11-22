@@ -5,13 +5,13 @@ export default function PageHeading({
 }: {
   eyebrow?: string;
   title: string;
-  description: string;
+  description?: string;
 }) {
   return (
     <div className="page-heading">
       {eyebrow && <span className="eyebrow">{eyebrow}</span>}
       <h1>{title}</h1>
-      <p>{description}</p>
+      {description && <p>{description}</p>}
     </div>
   );
 }
