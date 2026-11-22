@@ -39,9 +39,10 @@
   font-size: 0.875rem;
 }
 
-.admin-main {
+#main.admin-main {
+  inline-size: min(1220px, calc(100% - clamp(24px, 6vw, 48px)));
+  margin-block: clamp(16px, 2.5vw, 32px) 24px;
   margin-inline: auto;
-  max-width: 1220px;
   padding-block-end: 24px;
 }
 
@@ -58,6 +59,17 @@
 
 .admin-session-error {
   margin: 20px clamp(16px, 4vw, 48px) 0;
+}
+
+.admin-shell .request-row {
+  padding-inline: clamp(12px, 2vw, 18px);
+  border: 1px solid transparent;
+  border-radius: 16px;
+}
+
+.admin-shell .request-row:is(:hover, :focus-visible, :active) {
+  background: var(--bg);
+  border-color: var(--line);
 }
 
 .admin-shell .request-row > div {
@@ -80,6 +92,7 @@
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
+  margin-block-end: 12px;
 }
 
 .admin-toolbar .MuiTextField-root {
