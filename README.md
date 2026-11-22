@@ -31,7 +31,7 @@ npm run worker:check
 npm test
 ```
 
-`npm run build` builds both frontends. Build them individually with `npm run build:public` for `dist/` and `npm run build:admin` for `admin/dist/`. Reviewer sign-in uses one password on the separate HTTPS admin site. See the [Cloudflare setup](docs/cloudflare.md) to generate the password verifier and configure the Worker and Pages service binding.
+`npm run build` builds both frontends. Build them individually with `npm run build:public` for `dist/` and `npm run build:admin` for `admin/dist/`. Reviewer sign-in uses one password on the separate HTTPS admin site. Set your chosen password directly as the Worker's `ADMIN_PASSWORD` Secret in the Cloudflare Dashboard. Changing that secret and deploying the settings revokes existing sessions without code changes or migrations. See the [Cloudflare setup](docs/cloudflare.md) for the Worker and Pages service binding.
 
 ## Implemented
 
