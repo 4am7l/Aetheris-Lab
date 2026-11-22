@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
+import { URL } from "node:url";
 
 const dist = new URL("../dist/", import.meta.url);
 const files = await readdir(dist, { recursive: true });
