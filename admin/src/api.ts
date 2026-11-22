@@ -1,5 +1,5 @@
 import type { PublicRequestStatus } from "../../src/domain";
-import type { AdminRequestDetail, AdminRequestList } from "../../src/review";
+import { adminRequestDetailSchema, type AdminRequestList } from "../../src/review";
 
 const root = "/api/admin/requests";
 export const sessionQueryKey = ["reviewer-session"] as const;
@@ -64,8 +64,11 @@ export function adminList(status: PublicRequestStatus | "", after: string | null
   return adminRequest<AdminRequestList>(root + "?" + query.toString(), signal);
 }
 
-export function adminDetail(id: string, signal: AbortSignal) {
-  return adminRequest<AdminRequestDetail>(root + "/" + id, signal);
+export async function adminDetail(id: string, signal: AbortSignal) {
+  const payload = await adminRequest<unknown>(root + "/" + id, signal);
+  const detail = adminRequestDetailSchema.safeParse(payload);
+  if (!detail.success || detail.data.id !== id) throw new AdminError(502);
+  return detail.data;
 }
 
 export function adminAction(id: string, action: "decision" | "retry", body: unknown, csrfToken: string) {

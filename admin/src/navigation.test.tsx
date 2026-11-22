@@ -15,7 +15,7 @@ const clients: QueryClient[] = [];
 const createdAt = "2026-01-01T00:00:00Z";
 function detail(id: string): AdminRequestDetail {
   return { id, status: "Submitted", createdAt, updatedAt: createdAt,
-    input: { a: { ...blankSolution, name: `${id} detail` }, b: blankSolution, conditions: "" },
+    input: { a: { ...blankSolution, name: `${id} detail` }, b: { ...blankSolution, name: "Water" }, conditions: "" },
     images: [], evidence: [], history: [], run: null, report: null, review: null,
     approvedResult: null, canRetry: false };
 }
@@ -147,4 +147,49 @@ it.each(["http", "network"])("shows a retryable %s failure during navigation", a
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByText("first detail")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps the queue reachable after a successful HTTP response with incomplete review data", async () => {
+  const fallback = fetchMock.getMockImplementation()!;
+  let invalid = true;
+  fetchMock.mockImplementation((path, options) => String(path).endsWith("/first") && invalid
+    ? Promise.resolve(Response.json({ ...detail("first"), images: null }))
+    : fallback(path, options));
+  mount();
+  fireEvent.click(await screen.findByRole("link", { name: /first chemical/ }));
+  expect((await screen.findByRole("alert")).textContent).toContain("Could not load review data.");
+  fireEvent.click(screen.getByRole("button", { name: "History back" }));
+  await screen.findByRole("link", { name: /second chemical/ });
+  fireEvent.click(screen.getByRole("button", { name: "History forward" }));
+  await screen.findByRole("alert");
+  invalid = false;
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("first detail")).toBeTruthy();
+});
+
+it("keeps the admin shell mounted and recovers after a detail rendering error", async () => {
+  const fallback = fetchMock.getMockImplementation()!;
+  const errorDate = "2026-01-02T00:00:00Z";
+  let renderFails = true;
+  const format = Date.prototype.toLocaleString;
+  vi.spyOn(Date.prototype, "toLocaleString").mockImplementation(function (this: Date, ...args) {
+    if (renderFails && this.getTime() === Date.parse(errorDate)) throw new Error("Fixture render failure");
+    return format.apply(this, args);
+  });
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  fetchMock.mockImplementation((path, options) => String(path).endsWith("/first")
+    ? Promise.resolve(Response.json({ ...detail("first"), createdAt: errorDate }))
+    : fallback(path, options));
+  mount();
+  fireEvent.click(await screen.findByRole("link", { name: /first chemical/ }));
+  expect((await screen.findByRole("alert")).textContent).toContain("Could not display this review page.");
+  expect(screen.getByRole("link", { name: /Aetheris Admin/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "History back" }));
+  await screen.findByRole("link", { name: /first chemical/ });
+  fireEvent.click(screen.getByRole("button", { name: "History forward" }));
+  await screen.findByRole("alert");
+  renderFails = false;
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("first detail")).toBeTruthy();
+  expect(consoleError).toHaveBeenCalled();
 });

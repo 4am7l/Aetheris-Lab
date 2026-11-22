@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
+import { Component, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CacheProvider } from "@emotion/react";
@@ -39,6 +39,29 @@ function storePreference(key: string, value: string) {
     localStorage.setItem(key, value);
   } catch {
     // Appearance preferences are optional.
+  }
+}
+
+class ReviewErrorBoundary extends Component<{ children: ReactNode; t: (key: AdminTextKey) => string }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    const { children, t } = this.props;
+    if (!this.state.failed) return children;
+
+    return (
+      <div className="page">
+        <Link to="/" className="text-link">{t("back")} · {t("adminQueue")}</Link>
+        <Notice kind="error">
+          {t("adminRenderError")}
+          <div><Button onClick={() => this.setState({ failed: false })}>{t("retry")}</Button></div>
+        </Notice>
+      </div>
+    );
   }
 }
 
@@ -186,12 +209,14 @@ export default function App() {
                     {signOut.isError && signOut.variables === activeSession.csrfToken && <div className="admin-session-error">
                       <Notice kind="error">{t("signOutFailed")}</Notice>
                     </div>}
-                    <Routes>
-                      <Route path="/" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
-                      <Route path="/requests/:id" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
-                      <Route path="/reviews/:id" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
-                      <Route path="*" element={<Navigate to="/" replace />} />
-                    </Routes>
+                    <ReviewErrorBoundary key={pathname} t={t}>
+                      <Routes>
+                        <Route path="/" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
+                        <Route path="/requests/:id" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
+                        <Route path="/reviews/:id" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
+                        <Route path="*" element={<Navigate to="/" replace />} />
+                      </Routes>
+                    </ReviewErrorBoundary>
                   </>
                 ) : <Login />}
               </main>
