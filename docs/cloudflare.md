@@ -43,6 +43,22 @@ Use the staging Pages URL as `https://<pages-origin>` for write tests. The produ
 
 For local development, follow the [README](../README.md#run-locally). Vite proxies `/api/` requests to the local Worker on port `8787`.
 
+### Administrator Pages project
+
+The admin frontend builds as a separate static Pages project. Reviewer sign-in and the review queue require the configured Phase 4 backend. For this static deployment, leave runtime bindings and secrets unset.
+
+| Setting | Value |
+| --- | --- |
+| Production branch | `main` |
+| Framework preset | None |
+| Build system | v3 |
+| Root directory | `admin` |
+| Build command | `npm --prefix .. ci && npm --prefix .. run build:admin` |
+| Build output directory | `dist` |
+| Build variables | `NODE_VERSION=26`, `SKIP_DEPENDENCY_INSTALL=true` |
+
+The command installs dependencies from the shared root lockfile and writes the site to `admin/dist`.
+
 ## 3. Configure Worker bindings and migrations
 
 Confirm that the `DB` binding and its database UUID in `wrangler.toml` point to the existing D1 database. Confirm the existing `IMAGES` bucket binding and keep its public access off. Public intake stores JSON in D1.
