@@ -1,40 +1,46 @@
 import { z } from "zod";
-import { finalResultSchema, publicInputSchema, publicRequestIdSchema, publicRequestStatusSchema, publicResultSchema } from "./domain";
+import { finalResultSchema, publicRequestIdSchema, type PublicResult, type RequestInput } from "./domain";
 
-const solutionSideSchema = z.enum(["A", "B"]);
-const agentStatusSchema = z.enum(["running", "completed", "unconfigured", "failed"]);
-const evidenceSourceSchema = z.enum(["PubChem", "NIOSH"]);
-const evidenceKindSchema = z.enum(["identity", "hazard", "incompatibility"]);
-export type SolutionSide = z.infer<typeof solutionSideSchema>;
-export type AgentStatus = z.infer<typeof agentStatusSchema>;
-export type EvidenceSource = z.infer<typeof evidenceSourceSchema>;
-export type EvidenceKind = z.infer<typeof evidenceKindSchema>;
-const evidenceSchema = z.object({
-  id: z.string(),
-  source: evidenceSourceSchema,
-  kind: evidenceKindSchema,
-  solution: solutionSideSchema,
-  title: z.string(),
-  url: z.string(),
-  excerpt: z.string(),
-  retrievedAt: z.string(),
-});
-export type Evidence = z.infer<typeof evidenceSchema>;
+export type SolutionSide = "A" | "B";
+export type AgentStatus = "running" | "completed" | "unconfigured" | "failed";
+export type EvidenceSource = "PubChem" | "NIOSH";
+export type EvidenceKind = "identity" | "hazard" | "incompatibility";
+export interface Evidence {
+  id: string;
+  source: EvidenceSource;
+  kind: EvidenceKind;
+  solution: SolutionSide;
+  title: string;
+  url: string;
+  excerpt: string;
+  retrievedAt: string;
+}
 
-const identitySchema = z.object({
-  solution: solutionSideSchema,
-  state: z.enum(["matched", "ambiguous", "missing"]),
-  records: z.array(z.object({ name: z.string(), formula: z.string(), cid: z.number() })),
-});
-export type Identity = z.infer<typeof identitySchema>;
+export interface Identity {
+  solution: SolutionSide;
+  state: "matched" | "ambiguous" | "missing";
+  records: { name: string; formula: string; cid: number }[];
+}
 
-const gapCodeSchema = z.enum([
-  "identity", "identifierUnverified", "concentration", "solvent", "state", "temperature", "quantity",
-  "conditions", "hazards", "incompatibilities", "pubchemUnavailable", "nioshUnavailable", "nioshNoRecord",
-]);
-const evidenceGapSchema = z.object({ code: gapCodeSchema, solution: solutionSideSchema.optional() });
-export type GapCode = z.infer<typeof gapCodeSchema>;
-export type EvidenceGap = z.infer<typeof evidenceGapSchema>;
+export type GapCode =
+  | "identity"
+  | "identifierUnverified"
+  | "concentration"
+  | "solvent"
+  | "state"
+  | "temperature"
+  | "quantity"
+  | "conditions"
+  | "hazards"
+  | "incompatibilities"
+  | "pubchemUnavailable"
+  | "nioshUnavailable"
+  | "nioshNoRecord";
+
+export interface EvidenceGap {
+  code: GapCode;
+  solution?: SolutionSide;
+}
 
 export const assessmentSchema = z.strictObject({
   hazardEvidenceIds: z.array(z.uuidv4()).max(12),
@@ -49,12 +55,11 @@ export const assessmentSchema = z.strictObject({
 });
 export type AgentAssessment = z.infer<typeof assessmentSchema>;
 
-const preliminaryReportSchema = z.object({
-  identities: z.array(identitySchema),
-  gaps: z.array(evidenceGapSchema),
-  assessment: assessmentSchema.nullable(),
-});
-export type PreliminaryReport = z.infer<typeof preliminaryReportSchema>;
+export interface PreliminaryReport {
+  identities: Identity[];
+  gaps: EvidenceGap[];
+  assessment: AgentAssessment | null;
+}
 
 export const reviewDecisions = ["Approved", "Rejected", "Needs More Information"] as const;
 export type ReviewDecision = typeof reviewDecisions[number];
@@ -93,32 +98,27 @@ export const reviewInputSchema = z.discriminatedUnion("decision", [
 ]);
 export const retryInputSchema = z.strictObject({ runId: publicRequestIdSchema });
 
-export const adminRequestDetailSchema = z.object({
-  id: z.string(),
-  status: publicRequestStatusSchema,
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  input: publicInputSchema,
-  images: z.array(z.object({ id: z.string(), solution: solutionSideSchema })),
-  run: z.object({
-    id: z.string(),
-    status: agentStatusSchema,
-    failureCode: z.string().nullable(),
-    provider: z.string().nullable(),
-    model: z.string().nullable(),
-  }).nullable(),
-  report: preliminaryReportSchema.nullable(),
-  evidence: z.array(evidenceSchema),
-  review: z.object({
-    decision: z.enum(reviewDecisions), reviewerId: z.string(), notes: z.string(), createdAt: z.string(),
-  }).nullable(),
-  approvedResult: publicResultSchema.nullable(),
-  history: z.array(z.object({
-    id: z.number(), status: publicRequestStatusSchema, actor: z.string(), createdAt: z.string(),
-  })),
-  canRetry: z.boolean(),
-});
-export type AdminRequestDetail = z.infer<typeof adminRequestDetailSchema>;
+export interface AdminRequestDetail {
+  id: string;
+  status: import("./domain").PublicRequestStatus;
+  createdAt: string;
+  updatedAt: string;
+  input: RequestInput;
+  images: { id: string; solution: SolutionSide }[];
+  run: {
+    id: string;
+    status: AgentStatus;
+    failureCode: string | null;
+    provider: string | null;
+    model: string | null;
+  } | null;
+  report: PreliminaryReport | null;
+  evidence: Evidence[];
+  review: { decision: ReviewDecision; reviewerId: string; notes: string; createdAt: string } | null;
+  approvedResult: PublicResult | null;
+  history: { id: number; status: import("./domain").PublicRequestStatus; actor: string; createdAt: string }[];
+  canRetry: boolean;
+}
 
 export interface AdminRequestList {
   requests: {
