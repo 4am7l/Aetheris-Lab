@@ -207,6 +207,7 @@ select:focus {
   overflow-wrap: anywhere;
 }
 .app-shell {
+  --sidebar-width: 256px;
   display: flex;
   min-height: 100dvh;
 }
@@ -214,7 +215,7 @@ select:focus {
   position: fixed;
   inset-block: 0;
   inset-inline-start: 0;
-  width: 256px;
+  width: var(--sidebar-width);
   padding: 24px 14px 0;
   display: flex;
   flex-direction: column;
@@ -294,8 +295,17 @@ select:focus {
   margin-inline-start: auto;
 }
 .main-shell {
-  margin-inline-start: 256px;
-  width: calc(100% - 256px);
+  flex: 1;
+  min-inline-size: 0;
+  /* Reserve the sidebar width on both sides to center the workspace in the viewport. */
+  margin-inline: var(--sidebar-width);
+}
+.main-shell > :is(.topbar, #main) {
+  inline-size: min(1320px, calc(100% - clamp(16px, 3.2vw, 40px)));
+  margin-inline: auto;
+}
+.main-shell > #main {
+  margin-block-end: 24px;
 }
 .topbar {
   height: 80px;
@@ -346,7 +356,6 @@ select:focus {
   display: none !important;
 }
 #main {
-  margin-inline-end: 20px;
   border-radius: 28px;
   background: var(--surface);
   min-height: calc(100dvh - 150px);
@@ -1474,17 +1483,15 @@ footer {
   }
 }
 @media (max-width: 1200px) {
+  .app-shell {
+    --sidebar-width: 232px;
+  }
   .sidebar {
-    width: 232px;
     padding-inline: 10px;
   }
   .brand {
     font-size: 1.3rem;
     margin-inline: 13px;
-  }
-  .main-shell {
-    margin-inline-start: 232px;
-    width: calc(100% - 232px);
   }
   .topbar {
     padding-inline: 25px;
@@ -1537,9 +1544,11 @@ footer {
     display: none;
   }
 }
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
+  .app-shell {
+    --sidebar-width: 88px;
+  }
   .sidebar {
-    width: 88px;
     padding: 24px 12px;
   }
   .brand {
@@ -1562,10 +1571,8 @@ footer {
   .sidebar nav {
     gap: 10px;
   }
-  .main-shell {
-    margin-inline-start: 88px;
-    width: calc(100% - 88px);
-  }
+}
+@media (max-width: 900px) {
   .page {
     padding: 30px;
   }
@@ -1634,6 +1641,9 @@ footer {
   }
 }
 @media (max-width: 640px) {
+  .app-shell {
+    --sidebar-width: 0px;
+  }
   .sidebar {
     width: 256px;
     transform: translateX(-100%);
@@ -1677,10 +1687,6 @@ footer {
   .mobile-toggle {
     display: flex !important;
   }
-  .main-shell {
-    margin: 0;
-    width: 100%;
-  }
   .topbar {
     height: 72px;
     padding: 0 14px;
@@ -1700,7 +1706,6 @@ footer {
     font-size: 0.8125rem;
   }
   #main {
-    margin: 0 8px;
     border-radius: 24px;
     min-height: calc(100dvh - 138px);
   }
