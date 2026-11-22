@@ -148,7 +148,7 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
       </Notice>}
       {mutation.isSuccess && <div role="status"><Notice>{t("adminSaved")}</Notice></div>}
       {request && (
-        <>
+        <div className="admin-review-cards">
           <div className="panel request-metadata">
             <div><span>{t("requestId")}</span><strong className="mono"><bdi>{id}</bdi></strong></div>
             <div><span>{t("created")}</span><strong><DateLabel value={request.createdAt} /></strong></div>
@@ -209,7 +209,7 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
               ))}
             </ol>
           </section>
-        </>
+        </div>
       )}
     </div>
   );
