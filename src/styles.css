@@ -22,6 +22,10 @@
   --primary-soft: #e8f0fe;
   --selected: #c2e7ff;
   --selected-ink: #001d35;
+  --shape-extra-large: 28px;
+  --shape-extra-large-increased: 32px;
+  --shape-extra-extra-large: 48px;
+  --shape-full: 999px;
   color: var(--ink);
   background: var(--bg);
 }
@@ -356,7 +360,7 @@ select:focus {
   display: none !important;
 }
 #main {
-  border-radius: 28px;
+  border-radius: var(--shape-extra-extra-large);
   background: var(--surface);
   min-height: calc(100dvh - 150px);
   overflow: hidden;
@@ -409,7 +413,7 @@ select:focus {
   gap: 8px;
   padding: 11px 22px;
   min-height: 44px;
-  border-radius: 26px;
+  border-radius: var(--shape-full);
   font-size: 0.875rem;
   font-weight: 500;
   white-space: nowrap;
@@ -464,7 +468,7 @@ select:focus {
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: var(--shape-extra-large);
   padding: 26px;
 }
 .panel > .section-heading {
@@ -520,7 +524,7 @@ footer {
   justify-content: space-between;
   gap: 30px;
   padding: 30px 34px;
-  border-radius: 28px;
+  border-radius: var(--shape-extra-large-increased);
   background: var(--bg);
   border: 1px solid var(--line);
 }
@@ -755,7 +759,7 @@ footer {
 }
 .solution-card {
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: var(--shape-extra-large);
   padding: 24px;
   min-width: 0;
   background: var(--surface);
@@ -1287,18 +1291,25 @@ footer {
   color: var(--muted);
   margin-bottom: 18px;
 }
+.request-list {
+  display: grid;
+  gap: 6px;
+}
 .request-row {
   display: flex;
   align-items: center;
   gap: 15px;
-  padding: 20px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 20px clamp(12px, 2vw, 18px);
+  border: 1px solid transparent;
+  border-radius: var(--shape-extra-large);
 }
-.request-row:last-child {
-  border: 0;
-}
-.request-row:hover {
+.request-row:is(:hover, :focus-visible, :active) {
   background: var(--bg);
+  border-color: var(--line);
+}
+.request-row > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .request-row strong {
   font-size: 0.9375rem;
@@ -1313,7 +1324,7 @@ footer {
 .request-icon {
   width: 42px;
   height: 42px;
-  border-radius: 14px;
+  border-radius: var(--shape-full);
   background: var(--soft);
   color: var(--muted);
   display: grid;
@@ -1324,7 +1335,7 @@ footer {
   font-size: 0.75rem;
   color: var(--muted);
   background: var(--soft);
-  border-radius: 8px;
+  border-radius: var(--shape-full);
   padding: 8px 11px;
   margin-inline-start: auto;
   max-width: 190px;
@@ -1706,7 +1717,7 @@ footer {
     font-size: 0.8125rem;
   }
   #main {
-    border-radius: 24px;
+    border-radius: var(--shape-extra-large-increased);
     min-height: calc(100dvh - 138px);
   }
   .page {
@@ -1725,7 +1736,7 @@ footer {
   }
   .start-work.MuiPaper-root {
     padding: 24px 20px;
-    border-radius: 24px;
+    border-radius: var(--shape-extra-large);
   }
   .start-work h2 {
     font-size: 1.25rem;
@@ -1806,7 +1817,6 @@ footer {
   }
   .solution-card {
     padding: 20px;
-    border-radius: 24px;
   }
   .solution-top .small {
     display: block;
