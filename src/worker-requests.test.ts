@@ -306,6 +306,8 @@ describe("assessment and reviewer workflow", () => {
     mockFetch = vi.fn<typeof fetch>(async (resource, options) => {
       const url = new URL(String(resource));
       if (url.href === accessIssuer + "/cdn-cgi/access/certs") return Response.json({ keys: [jwk] });
+      // workerd only supports "follow" or "manual"; the agent must refuse redirected evidence.
+      expect(options?.redirect).toBe("manual");
       if (url.hostname === "pubchem.ncbi.nlm.nih.gov") {
         if (url.pathname.includes("/compound/name/")) {
           await onLookup?.();
@@ -389,6 +391,7 @@ describe("assessment and reviewer workflow", () => {
     env.AI_PROVIDER = "openai";
     env.AI_MODEL = "test-model";
     env.AGENT_API_KEY = "test-key";
+    env.AGENT_SYSTEM_PROMPT = "Private test instructions";
     const receipt = await (await post(documented)).json();
     const path = "requests/" + receipt.id;
     let release!: () => void;
@@ -413,6 +416,7 @@ describe("assessment and reviewer workflow", () => {
     });
     expect(new Set(privateDetail.evidence.map((item: { source: string }) => item.source))).toEqual(new Set(["PubChem", "NIOSH"]));
     expect(JSON.stringify(privateDetail)).not.toContain(receipt.trackingToken);
+    expect(JSON.stringify(privateDetail)).not.toContain(env.AGENT_SYSTEM_PROMPT);
     expect(await (await track(receipt)).json()).toEqual({
       id: receipt.id, status: "Pending Review", createdAt: receipt.createdAt, updatedAt: expect.any(String),
     });
@@ -485,6 +489,7 @@ describe("assessment and reviewer workflow", () => {
     env.AI_PROVIDER = "openai";
     env.AI_MODEL = "test-model";
     env.AGENT_API_KEY = "test-key";
+    env.AGENT_SYSTEM_PROMPT = "Private test instructions";
     badOutput = true;
     const receipt = await (await post(documented)).json();
     const path = "requests/" + receipt.id;

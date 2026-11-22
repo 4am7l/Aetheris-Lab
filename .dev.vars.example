@@ -6,6 +6,7 @@ AGENT_ENABLED=false
 AI_PROVIDER=
 AI_MODEL=
 AGENT_API_KEY=
+AGENT_SYSTEM_PROMPT=
 
 # Optional admin configuration. All four are required to enable reviewer access.
 ADMIN_ORIGIN=

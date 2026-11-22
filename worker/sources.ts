@@ -14,7 +14,7 @@ type Compound = z.infer<typeof compoundSchema>;
 type Citation = Pick<Evidence, "source" | "kind" | "title" | "url" | "excerpt">;
 
 async function retrieve(url: string, maxBytes: number) {
-  const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(8_000) });
+  const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(8_000) });
   if (response.status === 404) {
     await response.body?.cancel();
     return null;
