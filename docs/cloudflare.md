@@ -30,7 +30,7 @@ Cloudflare references for [Pages monorepo setup](https://developers.cloudflare.c
 
    | Name | Kind | Value |
    | --- | --- | --- |
-   | `ADMIN_ORIGIN` | Text | Exact assigned admin HTTPS origin, without a trailing slash |
+   | `ADMIN_ORIGIN` | Text | Set in `wrangler.toml` for the production Worker. If the admin hostname changes, update this value and the admin Pages runtime variable to the same exact HTTPS origin without a trailing slash. |
    | `ADMIN_PROXY_SECRET` | Secret | Same 64 lowercase hex characters as on admin Pages |
    | `ADMIN_PASSWORD` | Secret | Your chosen password, entered directly (no hash or prefix) |
    | `PUBLIC_ORIGINS` | Optional text | Comma-separated exact origins for browser clients that call the public Worker directly. Leave unset for the standard Pages deployment. |
@@ -44,7 +44,7 @@ Cloudflare references for [Pages monorepo setup](https://developers.cloudflare.c
 ## 3. Release the existing Worker and both frontends
 
 1. Test against local D1 with `npx wrangler d1 migrations apply DB --local`. For an approved release, verify the configured D1 binding points to the existing database, then run `npx wrangler d1 migrations apply DB --remote` from the repository root. Migration 0003 backfills the public workflow and preserves existing requests and tracking-token hashes. Migration 0004 is retained for databases that already applied it. Migration 0005 invalidates earlier sign-in sessions and adds password sessions and login counters while preserving review records. Keep the `DB`, `IMAGES`, `SUBMISSION_LIMIT`, and `TRACKING_LIMIT` bindings. Keep the R2 bucket's public `r2.dev` URL and any public custom domains disabled.
-2. Publish the existing Worker from the approved revision with `npm run worker:deploy -- --keep-vars` so Wrangler retains the dashboard text variables. Initially leave `AGENT_ENABLED=false` if Phase 4 analysis has yet to start. Keep the Pages runtime settings in place and release both Pages projects from the approved `main` revision. Changes to Pages Functions bindings take effect with a Pages deployment. [Wrangler dashboard variable preservation](https://developers.cloudflare.com/workers/wrangler/configuration/#source-of-truth).
+2. Publish the existing Worker from the approved revision with `npm run worker:deploy`. The same `wrangler.toml` supplies `ADMIN_ORIGIN` and enables `keep_vars` for both manual and Git-triggered Worker deployments, preserving other dashboard text variables such as `AGENT_ENABLED`. Initially leave `AGENT_ENABLED=false` if Phase 4 analysis has yet to start. Keep the Pages runtime settings in place and release both Pages projects from the approved `main` revision. Changes to Pages Functions bindings take effect with a Pages deployment. [Wrangler dashboard variable preservation](https://developers.cloudflare.com/workers/wrangler/configuration/#source-of-truth).
 3. Run the smoke checks below. To enable scheduled analysis, set `AGENT_ENABLED=true` when ready. Wrangler configures one cron tick a minute. Each tick takes the oldest eligible request. Failed or expired runs move to review and can be retried by a reviewer.
 
 The optional OpenAI adapter requires `AI_PROVIDER=openai`, `AI_MODEL` set to a Chat Completions model supporting JSON mode, and Worker secrets `AGENT_API_KEY` and `AGENT_SYSTEM_PROMPT`. Use the supplied JSON schema and keep the original review constraints in the prompt. Treat source content as untrusted, flag only documented hazards and explicit pair concerns, make uncertainties explicit, and omit compatibility claims, narrative text, mixing procedures, ratios, and quantities. With no provider configured, the Worker still collects evidence and records that AI screening was unconfigured.
@@ -53,6 +53,7 @@ The optional OpenAI adapter requires `AI_PROVIDER=openai`, `AI_MODEL` set to a C
 
 ## API and smoke checks
 
+- Before testing reviewer sign-in, check `/api/health` on the Worker. `submission: true` alongside `review: false` means the intake database check passed but the Worker's reviewer configuration is missing or invalid. Check the deployed Worker's `ADMIN_ORIGIN`, `ADMIN_PROXY_SECRET`, and `ADMIN_PASSWORD` using their names only. Once the configuration is valid, an unsigned request to `/api/admin/session` on admin Pages should return `401`.
 - At the public Pages URL, submit a request and track it with its token. `POST /api/requests` accepts the existing Phase 3 JSON contract. The multipart form supports one `input` JSON string up to 32 KiB and optional `imageA` and `imageB` JPEG, PNG, or WebP files up to 10 MiB each.
 - Check that `GET /api/requests/:id` returns `404` for missing, incorrect, and unrelated tokens. With the matching token, verify that only an approved receipt includes a published result.
 - Open `/admin` on the public project and verify it shows the public app's not-found view. Check that `/api/admin/session` on public Pages returns `404`. On admin Pages, check that an unsigned call to `/api/admin/session` or to a request or photo endpoint returns `401` after configuration.
