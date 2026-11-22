@@ -133,6 +133,7 @@ export default function App() {
                   {nav.map(([path, key, icon]) => (
                     <ListItemButton
                       component={NavLink}
+                      aria-label={t(key)}
                       end={path === "/"}
                       to={path}
                       key={path}
