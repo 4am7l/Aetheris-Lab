@@ -6,7 +6,10 @@ import {
 import { admin } from "./admin";
 import { processNextRequest } from "./orchestrator";
 import { providerFor, type AIConfig } from "./ai";
-import { adminConfig, authenticateReviewer, fromAdminProxy, logout, reviewerLogin, type ReviewerAuthEnv } from "./auth";
+import {
+  adminConfig, authenticateReviewer, fromAdminProxy, hasCsrfToken, logout, reviewerId, reviewerLogin, sessionInfo,
+  type ReviewerAuthEnv,
+} from "./auth";
 import { error, hex, json } from "./http";
 import { readSubmission, storeImages } from "./images";
 
@@ -51,10 +54,10 @@ async function health(env: Env) {
   }, ready ? 200 : 503);
 }
 
-async function withinLimit(request: Request, limiter: RateLimiter, prefix = "") {
+async function withinLimit(request: Request, limiter: RateLimiter) {
   // Cloudflare provides this header on direct ingress. Treat missing IPs as a shared bucket.
   const key = request.headers.get("CF-Connecting-IP") || "unknown-client";
-  const { success } = await limiter.limit({ key: prefix + key });
+  const { success } = await limiter.limit({ key });
   return success;
 }
 
@@ -136,16 +139,16 @@ async function track(request: Request, env: Env, id: string) {
 
 async function reviewApi(request: Request, env: Env, pathname: string) {
   const config = adminConfig(env);
-  if (!config) return error("REVIEW_AUTH_NOT_CONFIGURED", 503);
+  if (!config || !env.DB) return error("SERVICE_UNAVAILABLE", 503);
   if (!fromAdminProxy(request, config)) return error("FORBIDDEN", 403);
-  if (!env.DB || !env.SUBMISSION_LIMIT) return error("SERVICE_UNAVAILABLE", 503);
-  const auth = await reviewerLogin(request, env.DB, config, () => withinLimit(request, env.SUBMISSION_LIMIT, "admin-login:"));
-  if (auth) return auth;
+  if (pathname === "/api/admin/auth/login") return reviewerLogin(request, env.DB, config);
+  if (pathname.startsWith("/api/admin/auth/") && pathname !== "/api/admin/auth/logout") return error("NOT_FOUND", 404);
   const reviewer = await authenticateReviewer(request, env.DB, config);
   if (reviewer instanceof Response) return reviewer;
-  if (pathname === "/api/admin/session" && request.method === "GET") return json({ login: reviewer.login });
+  if (request.method !== "GET" && !hasCsrfToken(request, reviewer.csrfToken)) return error("FORBIDDEN", 403);
+  if (pathname === "/api/admin/session" && request.method === "GET") return json(sessionInfo(reviewer.csrfToken));
   if (pathname === "/api/admin/auth/logout" && request.method === "POST") return logout(env.DB, reviewer.tokenHash);
-  return admin(request, env, "github:" + reviewer.githubId);
+  return admin(request, env, reviewerId);
 }
 
 function allowedPublicOrigin(origin: string, env: Env) {

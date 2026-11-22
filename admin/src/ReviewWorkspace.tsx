@@ -10,7 +10,7 @@ import PageHeading from "../../src/components/PageHeading";
 import { ReviewForm } from "./ReviewForm";
 import { publicRequestStatuses, type PublicRequestStatus, type Solution } from "../../src/domain";
 import { statusLabel } from "../../src/reviewText";
-import { adminAction, adminDetail, AdminError, adminImage, adminList } from "./api";
+import { adminAction, adminDetail, AdminError, adminImage, adminList, sessionQueryKey } from "./api";
 import { useAdminText as useText } from "./text";
 import { Icon, Notice } from "../../src/ui";
 
@@ -109,7 +109,7 @@ function SubmittedSolution({ side, data }: { side: "A" | "B"; data: Solution }) 
   );
 }
 
-function RequestReview({ id }: { id: string }) {
+function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
   const t = useText();
   const client = useQueryClient();
   const queryKey = ["admin", "request", id];
@@ -123,7 +123,12 @@ function RequestReview({ id }: { id: string }) {
   });
   const mutation = useMutation({
     mutationFn: ({ action, body }: { action: "decision" | "retry"; body: unknown }) =>
-      adminAction(id, action, body),
+      adminAction(id, action, body, csrfToken),
+    onError(error) {
+      if (error instanceof AdminError && [401, 403].includes(error.status)) {
+        void client.invalidateQueries({ queryKey: sessionQueryKey });
+      }
+    },
     onSettled: () => Promise.all([
       client.invalidateQueries({ queryKey }),
       client.invalidateQueries({ queryKey: ["admin", "queue"] }),
@@ -210,7 +215,7 @@ function RequestReview({ id }: { id: string }) {
   );
 }
 
-export default function ReviewWorkspace() {
+export default function ReviewWorkspace({ csrfToken }: { csrfToken: string }) {
   const { id } = useParams();
-  return id ? <RequestReview key={id} id={id} /> : <ReviewQueue />;
+  return id ? <RequestReview key={id} id={id} csrfToken={csrfToken} /> : <ReviewQueue />;
 }

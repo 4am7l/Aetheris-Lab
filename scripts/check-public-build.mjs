@@ -14,7 +14,7 @@ assert.deepEqual(
 const privateMarkers = [
   /\/admin(?:[/"'`?]|$)/,
   /admin-(?:toolbar|form|grid|evidence|login|shell)/,
-  /Reviewer sign-in|Sign in with GitHub|Publish approved assessment|Retrieved source evidence/,
+  /Reviewer sign-in|Enter the admin password|Publish approved assessment|Retrieved source evidence/,
 ];
 for (const file of files) {
   if (!/\.(html|js|css|json)$/.test(file)) continue;

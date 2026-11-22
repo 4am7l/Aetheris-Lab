@@ -31,7 +31,7 @@ npm run worker:check
 npm test
 ```
 
-`npm run build` builds both frontends. Build them individually with `npm run build:public` for `dist/` and `npm run build:admin` for `admin/dist/`. Live reviewer sign-in requires an HTTPS admin origin, the Pages service binding, and an OAuth app registered to that origin. See the [Cloudflare setup](docs/cloudflare.md) for production and isolated staging configuration.
+`npm run build` builds both frontends. Build them individually with `npm run build:public` for `dist/` and `npm run build:admin` for `admin/dist/`. Reviewer sign-in uses one password on the separate HTTPS admin site. See the [Cloudflare setup](docs/cloudflare.md) to generate the password verifier and configure the Worker and Pages service binding.
 
 ## Implemented
 
@@ -67,7 +67,8 @@ npm test
 | `migrations/0001_initial.sql`     | Requests, private assessments, reviews, images, append-only events |
 | `migrations/0002_public_request_tracking.sql` | Public receipts and SHA-256 tracking-token digests |
 | `migrations/0003_public_assessment_workflow.sql` | Public workflow, private evidence, reviews, and audit |
-| `migrations/0004_admin_auth.sql`   | Expiring OAuth state and reviewer sessions                         |
+| `migrations/0004_admin_auth.sql`   | Historical reviewer authentication schema                          |
+| `migrations/0005_admin_password.sql` | Password sessions and login rate limiting                        |
 | `docs/admin-review.md`            | Secure review protocol and publication requirements                |
 | `docs/cloudflare.md`              | Cloudflare setup and deployment instructions                       |
 
@@ -75,4 +76,4 @@ npm test
 
 Submitted requests move through **Analyzing** and **Pending Review** before a qualified reviewer records a decision. The agent checks PubChem and NIOSH sources and can use an optional AI provider to flag evidence for private review. Reviewers write the final assessment, select citations, and approve publication. Only the matching tracking token can access an approved result.
 
-See [Cloudflare configuration](docs/cloudflare.md) for the two Pages projects, migrations, GitHub sign-in, and provider setup. The [administrator guide](docs/admin-review.md) covers review actions and audit behavior.
+See [Cloudflare configuration](docs/cloudflare.md) for the two Pages projects, migrations, password sign-in, and provider setup. The [administrator guide](docs/admin-review.md) covers review actions and audit behavior.

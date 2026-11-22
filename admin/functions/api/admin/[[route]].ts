@@ -29,6 +29,7 @@ export async function onRequest({ request, env }: Context) {
 
   const headers = new Headers(request.headers);
   headers.set("X-Aetheris-Admin-Proxy", ADMIN_PROXY_SECRET);
+  headers.set("X-Aetheris-Admin-Client-IP", request.headers.get("CF-Connecting-IP") ?? "");
   try {
     return await AETHERIS_API.fetch(new Request(request, { headers, redirect: "manual" }));
   } catch {

@@ -282,9 +282,12 @@ const adminOrigin = "https://aetheris-admin.pages.dev";
 const adminPrefix = "/api/admin/";
 const proxySecret = "1".repeat(64);
 const sessionCookie = "__Host-aetheris-session";
-const oauthCookie = "__Host-aetheris-oauth";
-const reviewer = { id: 451, login: "test-reviewer" };
-const reviewerActor = "github:" + reviewer.id;
+const reviewer = { login: "admin" };
+const reviewerActor = "password:admin";
+const password = Buffer.alloc(32, 0x42).toString("base64url");
+const wrongPassword = Buffer.alloc(32, 0x24).toString("base64url");
+const passwordHash = (value: string) => `sha256$${createHash("sha256").update(value).digest("hex")}`;
+const fixturePasswordHash = passwordHash(password);
 const approvalNotes = "Private laboratory review notes";
 const documented = {
   a: { ...blankSolution, name: "Glycerol", formula: "C3H8O3", notes: "Private sample note" },
@@ -300,7 +303,7 @@ const scheduled = () => worker.scheduled({} as Parameters<typeof worker.schedule
 
 describe("assessment and reviewer workflow", () => {
   let session: string;
-  let githubUser: { id: number; login: string };
+  let csrfToken: string;
   let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
   let onLookup: (() => Promise<void>) | undefined;
   let badOutput = false;
@@ -309,15 +312,18 @@ describe("assessment and reviewer workflow", () => {
   function reviewerRequest(path: string, init: RequestInit = {}) {
     const headers = new Headers(init.headers);
     headers.set("X-Aetheris-Admin-Proxy", proxySecret);
+    if (!headers.has("X-Aetheris-Admin-Client-IP")) {
+      headers.set("X-Aetheris-Admin-Client-IP", `2001:db8::${(clientNumber++).toString(16)}`);
+    }
     return call(adminPrefix + path, { ...init, headers }, adminOrigin);
   }
 
-  function adminCall(path: string, body?: unknown, cookie = session, origin = adminOrigin) {
+  function adminCall(path: string, body?: unknown, cookie = session, origin = adminOrigin, csrf = csrfToken) {
     return reviewerRequest(path, {
       method: body === undefined ? "GET" : "POST",
       headers: {
         Cookie: cookie,
-        ...(body === undefined ? {} : { ...jsonHeaders, Origin: origin }),
+        ...(body === undefined ? {} : { ...jsonHeaders, Origin: origin, "X-CSRF-Token": csrf }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -327,61 +333,19 @@ describe("assessment and reviewer workflow", () => {
     return response.headers.getSetCookie().find((value) => value.startsWith(name + "="));
   }
 
-  async function beginLogin() {
-    const response = await reviewerRequest("auth/login");
-    expect(response.status).toBe(303);
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
-    const authorize = new URL(response.headers.get("Location") ?? "");
-    expect(authorize.origin + authorize.pathname).toBe("https://github.com/login/oauth/authorize");
-    expect(authorize.searchParams.get("client_id")).toBe(env.GITHUB_OAUTH_CLIENT_ID);
-    expect(authorize.searchParams.get("redirect_uri")).toBe(adminOrigin + adminPrefix + "auth/callback");
-    expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(authorize.searchParams.get("scope")).toBeNull();
-    const state = authorize.searchParams.get("state") ?? "";
-    const challenge = authorize.searchParams.get("code_challenge") ?? "";
-    expect(state).toMatch(/^[a-f0-9]{64}$/);
-    expect(challenge).toMatch(/^[a-zA-Z0-9_-]{43}$/);
-    const cookie = browserCookie(response, oauthCookie) ?? "";
-    expect(cookie).toMatch(/; Secure; HttpOnly; SameSite=Lax$/);
-    expect(cookie).toContain("; Path=/;");
-    expect(cookie).not.toContain("Domain=");
-    const browser = cookie.split(";", 1)[0];
-    expect(browser).not.toContain(state);
-    return { state, browser, challenge };
-  }
-
-  function finishLogin(state: string, browser: string) {
-    return reviewerRequest(`auth/callback?state=${state}&code=fixture_code`, {
-      headers: { Cookie: browser },
+  function login(data: unknown, headers: HeadersInit = { ...jsonHeaders, Origin: adminOrigin }) {
+    return reviewerRequest("auth/login", {
+      method: "POST", headers, body: JSON.stringify(data),
     });
   }
 
-  async function signIn() {
-    const { state, browser, challenge } = await beginLogin();
-    const response = await finishLogin(state, browser);
-    expect(response.status).toBe(303);
-    expect(response.headers.get("Location")).toBe(adminOrigin + "/");
-    expect(browserCookie(response, oauthCookie)).toContain("Max-Age=0");
+  async function signIn(value = password, previousSession = "") {
+    const response = await login({ password: value }, { ...jsonHeaders, Origin: adminOrigin, Cookie: previousSession });
+    expect(response.status).toBe(200);
     const cookie = browserCookie(response, sessionCookie) ?? "";
-    expect(cookie).toMatch(/; Secure; HttpOnly; SameSite=Strict$/);
-    expect(cookie).toContain("; Path=/;");
-    expect(cookie).not.toContain("Domain=");
-    expect(cookie).not.toContain("test_access_token");
-
-    const exchange = mockFetch.mock.calls.filter(([url]) => String(url).includes("/login/oauth/access_token")).at(-1);
-    const form = new URLSearchParams(String(exchange?.[1]?.body));
-    expect(createHash("sha256").update(form.get("code_verifier") ?? "").digest("base64url")).toBe(challenge);
     const browserSession = cookie.split(";", 1)[0];
-    const raw = browserSession.split("=", 2)[1];
-    expect(raw).toMatch(/^[a-f0-9]{64}$/);
-    const stored = db.prepare("SELECT token_sha256, github_id, login FROM admin_sessions").get();
-    expect(stored).toEqual({
-      token_sha256: createHash("sha256").update(raw).digest("hex"),
-      github_id: String(reviewer.id),
-      login: reviewer.login,
-    });
-    return browserSession;
+    const body = await response.json() as { reviewer: typeof reviewer; csrfToken: string };
+    return { response, cookie, session: browserSession, ...body };
   }
 
   beforeEach(async () => {
@@ -395,9 +359,7 @@ describe("assessment and reviewer workflow", () => {
       TRACKING_LIMIT: testLimiter(30),
       ADMIN_ORIGIN: adminOrigin,
       ADMIN_PROXY_SECRET: proxySecret,
-      GITHUB_OAUTH_CLIENT_ID: "test-client-id",
-      GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
-      REVIEWER_GITHUB_IDS: String(reviewer.id),
+      ADMIN_PASSWORD_HASH: fixturePasswordHash,
       AGENT_ENABLED: "true",
       IMAGES: {
         put: async (key: string, file: ArrayBuffer) => objects.set(key, new Blob([file])),
@@ -409,24 +371,9 @@ describe("assessment and reviewer workflow", () => {
     await migrate("0002_public_request_tracking.sql");
     await migrate("0003_public_assessment_workflow.sql");
     await migrate("0004_admin_auth.sql");
-    githubUser = reviewer;
+    await migrate("0005_admin_password.sql");
     mockFetch = vi.fn<typeof fetch>(async (resource, options) => {
       const url = new URL(String(resource));
-      if (url.href === "https://github.com/login/oauth/access_token") {
-        expect(options?.redirect).toBe("manual");
-        const form = new URLSearchParams(String(options?.body));
-        expect(options?.method).toBe("POST");
-        expect(form.get("client_secret")).toBe(env.GITHUB_OAUTH_CLIENT_SECRET);
-        expect(form.get("code")).toBe("fixture_code");
-        expect(form.get("redirect_uri")).toBe(adminOrigin + adminPrefix + "auth/callback");
-        expect(form.get("code_verifier")).toMatch(/^[a-f0-9]{64}$/);
-        return Response.json({ access_token: "test_access_token" });
-      }
-      if (url.href === "https://api.github.com/user") {
-        expect(options?.redirect).toBe("manual");
-        expect(new Headers(options?.headers).get("Authorization")).toBe("Bearer test_access_token");
-        return Response.json(githubUser);
-      }
       // workerd only supports "follow" or "manual"; the agent must refuse redirected evidence.
       expect(options?.redirect).toBe("manual");
       if (url.hostname === "pubchem.ncbi.nlm.nih.gov") {
@@ -474,7 +421,7 @@ describe("assessment and reviewer workflow", () => {
       throw new Error("Unexpected outbound request");
     });
     vi.stubGlobal("fetch", mockFetch);
-    session = await signIn();
+    ({ session, csrfToken } = await signIn());
   });
 
   afterEach(() => {
@@ -482,7 +429,7 @@ describe("assessment and reviewer workflow", () => {
     db.close();
   });
 
-  it("backfills existing Phase 3 requests with their original token and submission time", async () => {
+  it("backfills Phase 3 requests and revokes legacy OAuth sessions during migration", async () => {
     db.close();
     db = new DatabaseSync(":memory:");
     env.DB = testDatabase(db);
@@ -490,10 +437,17 @@ describe("assessment and reviewer workflow", () => {
     const receipt = await (await post(input)).json();
     await migrate("0003_public_assessment_workflow.sql");
     await migrate("0004_admin_auth.sql");
+    const legacyCookie = "a".repeat(64);
+    db.prepare("INSERT INTO admin_sessions VALUES (?, ?, ?, ?)").run(
+      createHash("sha256").update(legacyCookie).digest("hex"), "451", "legacy-reviewer", 2147483647,
+    );
+    await migrate("0005_admin_password.sql");
     expect(await (await track(receipt)).json()).toEqual({
       id: receipt.id, status: "Submitted", createdAt: receipt.createdAt, updatedAt: receipt.updatedAt,
     });
     expect(db.prepare("SELECT status FROM public_request_status_history").get()?.status).toBe("Submitted");
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'admin_oauth_states'").get()).toBeUndefined();
+    expect((await adminCall("session", undefined, `${sessionCookie}=${legacyCookie}`)).status).toBe(401);
   });
 
   it("checks the proxy, exact origin and reviewer session before admin resource access", async () => {
@@ -532,50 +486,112 @@ describe("assessment and reviewer workflow", () => {
       expect(rejected.status).toBe(403);
       expect(rejected.headers.has("Access-Control-Allow-Origin")).toBe(false);
     }
-    expect(await (await adminCall("session")).json()).toEqual({ login: reviewer.login });
-    env.REVIEWER_GITHUB_IDS = "628";
-    expect((await adminCall("requests")).status).toBe(403);
-    delete env.REVIEWER_GITHUB_IDS;
+    expect(await (await adminCall("session")).json()).toEqual({ reviewer, csrfToken });
+    env.ADMIN_PASSWORD_HASH = "invalid-hash";
+    expect((await login({ password })).status).toBe(503);
+    delete env.ADMIN_PASSWORD_HASH;
     expect((await adminCall("requests")).status).toBe(503);
   });
 
-  it("binds OAuth state to the browser and permits a single successful callback", async () => {
-    const { state, browser } = await beginLogin();
-    mockFetch.mockClear();
-    const wrongBrowser = await finishLogin(state, oauthCookie + "=" + "f".repeat(64));
-    expect(wrongBrowser.headers.get("Location")).toBe(adminOrigin + "/?auth=failed");
+  it("verifies the password and issues an independent host-only session", async () => {
+    const signedIn = await signIn();
+    expect(signedIn.reviewer).toEqual(reviewer);
+    expect(signedIn.csrfToken).toBeTruthy();
+    expect(signedIn.csrfToken).not.toBe(csrfToken);
+    expect(signedIn.session).not.toBe(session);
+    expect(signedIn.response.headers.get("Cache-Control")).toBe("no-store");
+    expect(signedIn.response.headers.get("Location")).toBeNull();
+    expect(signedIn.cookie).toContain("; Secure");
+    expect(signedIn.cookie).toContain("; HttpOnly");
+    expect(signedIn.cookie).toContain("; SameSite=Strict");
+    expect(signedIn.cookie).toContain("; Path=/");
+    expect(signedIn.cookie).toContain("; Max-Age=28800");
+    expect(signedIn.cookie).not.toContain("Domain=");
+    const raw = signedIn.session.split("=", 2)[1];
+    expect(raw).toMatch(/^[a-f0-9]{64}$/);
+    const stored = db.prepare("SELECT * FROM admin_sessions").all();
+    expect(stored).toHaveLength(2);
+    for (const row of stored) expect(row.token_sha256).toMatch(/^[a-f0-9]{64}$/);
+    for (const credential of [raw, password, fixturePasswordHash]) {
+      expect(JSON.stringify(stored)).not.toContain(credential);
+    }
+    expect(await (await adminCall("session", undefined, signedIn.session)).json()).toEqual({
+      reviewer, csrfToken: signedIn.csrfToken,
+    });
     expect(mockFetch).not.toHaveBeenCalled();
-    const responses = await Promise.all([finishLogin(state, browser), finishLogin(state, browser)]);
-    expect(responses.map((response) => response.headers.get("Location")).sort()).toEqual([
-      adminOrigin + "/", adminOrigin + "/?auth=failed",
-    ]);
-    expect(responses.filter((response) => browserCookie(response, sessionCookie))).toHaveLength(1);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects unlisted GitHub IDs, expired OAuth state and redirects from the identity provider", async () => {
-    githubUser = { ...reviewer, id: reviewer.id + 1 };
-    const unlisted = await beginLogin();
-    const unlistedResponse = await finishLogin(unlisted.state, unlisted.browser);
-    expect(unlistedResponse.headers.get("Location")).toBe(adminOrigin + "/?auth=failed");
-    expect(browserCookie(unlistedResponse, sessionCookie)).toBeUndefined();
-
-    const expired = await beginLogin();
-    db.prepare("UPDATE admin_oauth_states SET expires_at = 0").run();
-    mockFetch.mockClear();
-    expect((await finishLogin(expired.state, expired.browser)).headers.get("Location")).toBe(adminOrigin + "/?auth=failed");
+  it("accepts only same-origin JSON password submissions and rejects invalid credentials", async () => {
+    const get = await reviewerRequest("auth/login");
+    expect(get.status).toBe(405);
+    expect(get.headers.get("Allow")).toBe("POST");
+    expect((await reviewerRequest("auth/callback")).status).toBe(404);
+    expect((await adminCall("auth/callback")).status).toBe(404);
+    const failures = await Promise.all([
+      login({ password: wrongPassword }),
+      login({ password: 123 }),
+      login({ password, login: reviewer.login }),
+      login({ password }, { ...jsonHeaders, Origin: "https://preview.aetheris-admin.pages.dev" }),
+      login({ password }, jsonHeaders),
+      login({ password }, { "Content-Type": "text/plain", Origin: adminOrigin }),
+      login({ password: "x".repeat(65536) }),
+    ]);
+    expect(failures.map(({ status }) => status)).toEqual([401, 400, 400, 403, 403, 415, 413]);
+    expect(await failures[0].json()).toEqual({ error: "UNAUTHORIZED" });
+    for (const failed of [get, ...failures]) {
+      expect(failed.headers.getSetCookie()).toEqual([]);
+      expect(failed.headers.get("Location")).toBeNull();
+      expect(failed.headers.get("Cache-Control")).toBe("no-store");
+    }
+    expect(db.prepare("SELECT COUNT(*) AS count FROM admin_sessions").get()?.count).toBe(1);
+    expect((await adminCall("session")).status).toBe(200);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
 
-    const redirected = await beginLogin();
-    mockFetch.mockResolvedValueOnce(new Response(null, {
-      status: 302,
-      headers: { Location: "https://untrusted.example" },
-    }));
-    const redirectResponse = await finishLogin(redirected.state, redirected.browser);
-    expect(redirectResponse.headers.get("Location")).toBe(adminOrigin + "/?auth=failed");
-    expect(browserCookie(redirectResponse, sessionCookie)).toBeUndefined();
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch.mock.calls[0][1]?.redirect).toBe("manual");
+  it("enforces the per-client cap when login attempts arrive concurrently", async () => {
+    const headers = { ...jsonHeaders, Origin: adminOrigin, "X-Aetheris-Admin-Client-IP": "192.0.2.10" };
+    const attempts = await Promise.all(Array.from({ length: 6 }, () => login({ password: wrongPassword }, headers)));
+    expect(attempts.map(({ status }) => status).sort()).toEqual([401, 401, 401, 401, 401, 429]);
+    const blocked = await login({ password }, { ...headers, "CF-Connecting-IP": "192.0.2.100" });
+    expect(blocked.status).toBe(429);
+    expect(await blocked.json()).toEqual({ error: "RATE_LIMITED" });
+    expect(Number(blocked.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(blocked.headers.getSetCookie()).toEqual([]);
+    expect((await login({ password })).status).toBe(200);
+    db.prepare("UPDATE admin_login_attempts SET attempted_at = 0").run();
+    expect((await login({ password }, headers)).status).toBe(200);
+  });
+
+  it("limits password attempts across clients and recovers after the window", async () => {
+    // The fixture sign-in already used one attempt in the shared window.
+    const attempts = await Promise.all(Array.from({ length: 30 }, () => login({ password: wrongPassword })));
+    expect(attempts.filter(({ status }) => status === 401)).toHaveLength(29);
+    expect(attempts.filter(({ status }) => status === 429)).toHaveLength(1);
+    expect((await login({ password })).status).toBe(429);
+    db.prepare("UPDATE admin_login_attempts SET attempted_at = 0").run();
+    expect((await login({ password })).status).toBe(200);
+  });
+
+  it("fails closed if password throttling is unavailable", async () => {
+    db.exec("DROP TABLE admin_login_attempts");
+    const response = await login({ password });
+    expect(response.status).toBe(503);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM admin_sessions").get()?.count).toBe(1);
+  });
+
+  it("requires a CSRF token from the same session for admin mutations", async () => {
+    const request = "requests/" + randomUUID();
+    const other = await signIn();
+    for (const path of [request + "/retry", request + "/decision", "auth/logout"]) {
+      const missing = await reviewerRequest(path, {
+        method: "POST", headers: { ...jsonHeaders, Origin: adminOrigin, Cookie: session }, body: "{}",
+      });
+      expect(missing.status).toBe(403);
+      expect((await adminCall(path, {}, session, adminOrigin, other.csrfToken)).status).toBe(403);
+    }
+    expect((await adminCall("session")).status).toBe(200);
+    expect((await adminCall("session", undefined, other.session)).status).toBe(200);
   });
 
   it("expires sessions and deletes them on logout", async () => {
@@ -585,9 +601,27 @@ describe("assessment and reviewer workflow", () => {
     expect((await adminCall("session")).status).toBe(401);
     expect(db.prepare("SELECT COUNT(*) AS count FROM admin_sessions").get()?.count).toBe(0);
 
-    session = await signIn();
+    ({ session, csrfToken } = await signIn());
     db.prepare("UPDATE admin_sessions SET expires_at = 0").run();
     expect((await adminCall("requests")).status).toBe(401);
+  });
+
+  it("replaces the previous session on a successful re-login in the same browser", async () => {
+    const rotated = await signIn(password, session);
+    expect(rotated.session).not.toBe(session);
+    expect((await adminCall("session")).status).toBe(401);
+    expect((await adminCall("session", undefined, rotated.session)).status).toBe(200);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM admin_sessions").get()?.count).toBe(1);
+  });
+
+  it("invalidates prior sessions when the password verifier changes", async () => {
+    env.ADMIN_PASSWORD_HASH = passwordHash(wrongPassword);
+    expect((await adminCall("session")).status).toBe(401);
+    expect((await login({ password })).status).toBe(401);
+    const rotated = await signIn(wrongPassword);
+    expect(await (await adminCall("session", undefined, rotated.session)).json()).toEqual({
+      reviewer, csrfToken: rotated.csrfToken,
+    });
   });
 
   it("runs the agent once, keeps evidence private, and publishes only the human decision to its token owner", async () => {
@@ -658,7 +692,7 @@ describe("assessment and reviewer workflow", () => {
       status: "Approved",
       result: { classification: "Insufficient information", conditions: review.result.conditions },
     });
-    for (const secret of [approvalNotes, reviewerActor, reviewer.login, "hazardEvidenceIds", documented.a.notes, receipt.trackingToken]) {
+    for (const secret of [approvalNotes, reviewerActor, "reviewerId", "hazardEvidenceIds", documented.a.notes, receipt.trackingToken]) {
       expect(JSON.stringify(published)).not.toContain(secret);
     }
     const other = await (await post(input)).json();

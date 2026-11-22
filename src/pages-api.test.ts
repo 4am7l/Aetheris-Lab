@@ -73,31 +73,36 @@ describe("admin Pages API", () => {
     return adminApi({ request, env: { ...env, AETHERIS_API: fetch && { fetch } } });
   }
 
-  it("overwrites the proxy credential and returns the Worker's redirect and cookies unchanged", async () => {
+  it("forwards the same-origin password request with trusted proxy headers and returns the session cookie", async () => {
     const request = new Request(adminOrigin + "/api/admin/auth/login", {
+      method: "POST",
       headers: {
-        Cookie: "__Host-aetheris-oauth=test",
+        Origin: adminOrigin,
+        "Content-Type": "application/json",
+        "CF-Connecting-IP": "192.0.2.23",
+        "X-Aetheris-Admin-Client-IP": "192.0.2.99",
         "X-Aetheris-Admin-Proxy": "caller-supplied",
       },
+      body: JSON.stringify({ password: "test-only" }),
     });
-    const redirect = new Response(null, {
-      status: 303,
-      headers: { Location: "https://github.com/login/oauth/authorize", "Cache-Control": "no-store" },
+    const sessionCookie = "__Host-aetheris-session=test; Path=/; Secure; HttpOnly; SameSite=Strict";
+    const signedIn = Response.json({ reviewer: { login: "admin" }, csrfToken: "test-csrf" }, {
+      headers: { "Set-Cookie": sessionCookie, "Cache-Control": "no-store" },
     });
-    redirect.headers.append("Set-Cookie", "__Host-aetheris-oauth=test; Secure; HttpOnly");
-    redirect.headers.append("Set-Cookie", "__Host-aetheris-session=test; Secure; HttpOnly");
-    const fetch = vi.fn().mockResolvedValue(redirect);
+    const fetch = vi.fn().mockResolvedValue(signedIn);
 
     const response = await callAdmin(request, fetch);
-    expect(response).toBe(redirect);
-    expect(response.headers.getSetCookie()).toHaveLength(2);
+    expect(response).toBe(signedIn);
+    expect(response.headers.getSetCookie()).toEqual([sessionCookie]);
     expect(response.headers.has("X-Aetheris-Admin-Proxy")).toBe(false);
+    expect(response.headers.has("X-Aetheris-Admin-Client-IP")).toBe(false);
     expect(fetch).toHaveBeenCalledTimes(1);
     const forwarded = fetch.mock.calls[0][0] as Request;
     expect(forwarded.url).toBe(request.url);
     expect(forwarded.redirect).toBe("manual");
-    expect(forwarded.headers.get("Cookie")).toBe("__Host-aetheris-oauth=test");
     expect(forwarded.headers.get("X-Aetheris-Admin-Proxy")).toBe(proxySecret);
+    expect(forwarded.headers.get("X-Aetheris-Admin-Client-IP")).toBe("192.0.2.23");
+    expect(await forwarded.json()).toEqual({ password: "test-only" });
   });
 
   it("blocks public endpoints, preview hosts, foreign origins and unsafe methods without an origin", async () => {
@@ -122,7 +127,13 @@ describe("admin Pages API", () => {
     const endpoint = adminOrigin + "/api/admin/requests/fixture/retry";
     const request = new Request(endpoint, {
       method: "POST",
-      headers: { Origin: adminOrigin, "Content-Type": "application/json" },
+      headers: {
+        Origin: adminOrigin,
+        "Content-Type": "application/json",
+        Cookie: "__Host-aetheris-session=test",
+        "X-CSRF-Token": "test-csrf",
+        "X-Aetheris-Admin-Client-IP": "192.0.2.99",
+      },
       body: JSON.stringify({ runId: "fixture" }),
     });
     const fetch = vi.fn().mockResolvedValue(Response.json({ retried: true }));
@@ -135,6 +146,9 @@ describe("admin Pages API", () => {
     expect((await callAdmin(request, fetch)).status).toBe(200);
     const forwarded = fetch.mock.calls[0][0] as Request;
     expect(forwarded.headers.get("Origin")).toBe(adminOrigin);
+    expect(forwarded.headers.get("Cookie")).toBe("__Host-aetheris-session=test");
+    expect(forwarded.headers.get("X-CSRF-Token")).toBe("test-csrf");
+    expect(forwarded.headers.get("X-Aetheris-Admin-Client-IP")).toBe("");
     expect(await forwarded.json()).toEqual({ runId: "fixture" });
   });
 });
