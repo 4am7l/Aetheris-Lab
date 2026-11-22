@@ -1,14 +1,17 @@
 import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AgentReport } from "./AgentReport";
 import { ApprovedResultPanel } from "../../src/components/ApprovedResultPanel";
 import PageHeading from "../../src/components/PageHeading";
 import { ReviewForm } from "./ReviewForm";
+import { RequestManagement } from "./RequestManagement";
 import { publicRequestStatuses, type PublicRequestStatus, type Solution } from "../../src/domain";
+import { adminManageLimit } from "../../src/review";
 import { statusLabel } from "../../src/reviewText";
 import { adminAction, adminDetail, AdminError, adminImage, adminList, sessionQueryKey } from "./api";
 import { useAdminText as useText } from "./text";
@@ -29,25 +32,46 @@ function ReadError({ error, retry }: { error: unknown; retry: () => void }) {
   );
 }
 
-function ReviewQueue() {
+function ReviewQueue({ csrfToken }: { csrfToken: string }) {
   const t = useText();
+  const [params, setParams] = useSearchParams();
+  const archived = params.get("view") === "archive";
   const [status, setStatus] = useState<PublicRequestStatus | "">("");
+  const [managing, setManaging] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
   const queue = useInfiniteQuery({
-    queryKey: ["admin", "queue", status],
-    queryFn: ({ pageParam, signal }) => adminList(status, pageParam, signal),
+    queryKey: ["admin", "queue", status, archived],
+    queryFn: ({ pageParam, signal }) => adminList(status, archived, pageParam, signal),
     initialPageParam: null as string | null,
     getNextPageParam: ({ next }) => next ?? undefined,
     retry: false,
     gcTime: 0,
   });
   const requests = queue.data?.pages.flatMap((page) => page.requests) ?? [];
+  const ids = selected.filter((id) => requests.some((request) => request.id === id));
+
+  function showArchive(show: boolean) {
+    setSelected([]);
+    setParams(show ? { view: "archive" } : {}, { replace: true });
+  }
 
   return (
     <div className="page">
       <PageHeading title={t("adminQueue")} />
+      <div className="button-row admin-request-controls" role="group" aria-label={t("requestViews")}>
+        <Button variant={archived ? "outlined" : "contained"} aria-pressed={!archived} onClick={() => showArchive(false)}>
+          {t("activeRequests")}
+        </Button>
+        <Button variant={archived ? "contained" : "outlined"} aria-pressed={archived} onClick={() => showArchive(true)}>
+          {t("archivedRequests")}
+        </Button>
+      </div>
       <div className="admin-toolbar">
         <TextField select fullWidth label={t("reviewerFilter")} value={status || "all"}
-          onChange={(event) => setStatus(event.target.value === "all" ? "" : event.target.value as PublicRequestStatus)}>
+          onChange={(event) => {
+            setSelected([]);
+            setStatus(event.target.value === "all" ? "" : event.target.value as PublicRequestStatus);
+          }}>
           <MenuItem value="all">{t("all")}</MenuItem>
           {publicRequestStatuses.map((value) =>
             <MenuItem key={value} value={value}>{t(statusLabel[value])}</MenuItem>,
@@ -56,6 +80,17 @@ function ReviewQueue() {
         <Button variant="outlined" disabled={queue.isFetching} onClick={() => void queue.refetch()}>
           {t("refreshReceipt")}
         </Button>
+        <Button variant="outlined" disabled={!managing && !requests.length} onClick={() => {
+          setSelected([]);
+          setManaging(!managing);
+        }}>
+          {t(managing ? "doneManaging" : "manageRecords")}
+        </Button>
+      </div>
+      <div className="admin-request-controls">
+        {managing && <p>{t("selectedRequests").replace("{count}", String(ids.length))}</p>}
+        <RequestManagement ids={ids} archived={archived} csrfToken={csrfToken}
+          onSaved={(_action, targets) => setSelected((current) => current.filter((id) => !targets.includes(id)))} />
       </div>
       {queue.isPending && <p role="status">{t("loading")}</p>}
       {queue.isError && <ReadError error={queue.error} retry={() => void queue.refetch()} />}
@@ -63,14 +98,21 @@ function ReviewQueue() {
         requests.length ? (
           <div className="request-list">
             {requests.map((request) => (
-              <Link key={request.id} to={"/requests/" + request.id} className="request-row">
-                <span className="request-icon"><Icon name="assignment" /></span>
-                <div>
-                  <strong><bdi>{request.nameA}</bdi> · <bdi>{request.nameB}</bdi></strong>
-                  <small><bdi>{request.id.slice(0, 8)}</bdi> · <DateLabel value={request.createdAt} /></small>
-                </div>
-                <span className="status-pill">{t(statusLabel[request.status])}</span>
-              </Link>
+              <div className="admin-queue-entry" key={request.id}>
+                {managing && <Checkbox size="small" checked={ids.includes(request.id)}
+                  disabled={!ids.includes(request.id) && ids.length >= adminManageLimit}
+                  slotProps={{ input: { "aria-label": t("selectRequest").replace("{id}", request.id.slice(0, 8)) } }}
+                  onChange={(_event, checked) => setSelected((current) => checked
+                    ? [...current, request.id] : current.filter((id) => id !== request.id))} />}
+                <Link to={"/requests/" + request.id} className="request-row">
+                  <span className="request-icon"><Icon name="assignment" /></span>
+                  <div>
+                    <strong><bdi>{request.nameA}</bdi> · <bdi>{request.nameB}</bdi></strong>
+                    <small><bdi>{request.id.slice(0, 8)}</bdi> · <DateLabel value={request.createdAt} /></small>
+                  </div>
+                  <span className="status-pill">{t(statusLabel[request.status])}</span>
+                </Link>
+              </div>
             ))}
           </div>
         ) : <div className="empty-state">{t("adminEmpty")}</div>
@@ -111,6 +153,7 @@ function SubmittedSolution({ side, data }: { side: "A" | "B"; data: Solution }) 
 
 function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
   const t = useText();
+  const navigate = useNavigate();
   const client = useQueryClient();
   const queryKey = ["admin", "request", id];
   const detail = useQuery({
@@ -136,10 +179,12 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
     gcTime: 0,
   });
   const request = detail.isSuccess ? detail.data : undefined;
+  const archived = Boolean(request?.archivedAt);
+  const queuePath = archived ? "/?view=archive" : "/";
 
   return (
     <div className="page">
-      <Link to="/" className="text-link">{t("back")} · {t("adminQueue")}</Link>
+      <Link to={queuePath} className="text-link">{t("back")} · {t("adminQueue")}</Link>
       <PageHeading title={t("adminRequest")} />
       {detail.isPending && <p role="status">{t("loading")}</p>}
       {detail.isError && <ReadError error={detail.error} retry={() => void detail.refetch()} />}
@@ -149,6 +194,14 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
       {mutation.isSuccess && <div role="status"><Notice>{t("adminSaved")}</Notice></div>}
       {request && (
         <div className="admin-review-cards">
+          <div className="admin-request-controls">
+            {archived && <p>{t("archivedRequest")}</p>}
+            <RequestManagement ids={[id]} archived={archived} csrfToken={csrfToken}
+              onSaved={async (action) => {
+                if (action === "delete") await navigate(queuePath, { replace: true });
+                else await detail.refetch();
+              }} />
+          </div>
           <div className="panel request-metadata">
             <div><span>{t("requestId")}</span><strong className="mono"><bdi>{id}</bdi></strong></div>
             <div><span>{t("created")}</span><strong><DateLabel value={request.createdAt} /></strong></div>
@@ -184,7 +237,7 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
               {t("retryAgent")}
             </Button>
           </div>}
-          {request.status === "Pending Review" && request.run && (
+          {!archived && request.status === "Pending Review" && request.run && (
             <ReviewForm key={request.run.id} request={request} busy={mutation.isPending}
               onSubmit={(body) => mutation.mutate({ action: "decision", body })} />
           )}
@@ -217,5 +270,5 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
 
 export default function ReviewWorkspace({ csrfToken }: { csrfToken: string }) {
   const { id } = useParams();
-  return id ? <RequestReview key={id} id={id} csrfToken={csrfToken} /> : <ReviewQueue />;
+  return id ? <RequestReview key={id} id={id} csrfToken={csrfToken} /> : <ReviewQueue csrfToken={csrfToken} />;
 }

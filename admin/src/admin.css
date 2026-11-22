@@ -83,6 +83,25 @@
   flex: 1 1 220px;
 }
 
+.admin-request-controls:not(:empty) {
+  margin-block-end: 12px;
+}
+
+.admin-request-controls > p {
+  margin-block: 0 8px;
+  color: var(--muted);
+}
+
+.admin-queue-entry {
+  display: flex;
+  align-items: center;
+}
+
+.admin-queue-entry .request-row {
+  flex: 1;
+  min-inline-size: 0;
+}
+
 .admin-review-cards {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

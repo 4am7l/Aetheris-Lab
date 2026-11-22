@@ -1,4 +1,4 @@
-import type { R2Bucket } from "@cloudflare/workers-types";
+import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
 import { publicRequestMaxBytes, validateImage } from "../src/domain";
 import type { SolutionSide } from "../src/review";
 import { error, identityEncoding, parseJson, readBytes, readJson } from "./http";
@@ -124,4 +124,22 @@ export async function storeImages(bucket: R2Bucket, requestId: string, images: I
     await Promise.allSettled(stored.map(({ objectKey }) => bucket.delete(objectKey)));
     throw cause;
   }
+}
+
+export async function deleteQueuedImages(db: D1Database, bucket: R2Bucket) {
+  if (!bucket) return;
+  const { results } = await db.prepare(
+    "SELECT object_key AS key FROM public_request_image_deletions ORDER BY queued_at, object_key LIMIT 50",
+  ).all<{ key: string }>();
+  const keys = results.map(({ key }) => key);
+  if (!keys.length) return;
+  try {
+    await bucket.delete(keys);
+  } catch {
+    // Leave keys queued for the next scheduled invocation.
+    return;
+  }
+  await db.prepare(
+    "DELETE FROM public_request_image_deletions WHERE object_key IN (SELECT value FROM json_each(?))",
+  ).bind(JSON.stringify(keys)).run();
 }

@@ -374,13 +374,16 @@ describe("assessment and reviewer workflow", () => {
         put: async (key: string, file: ArrayBuffer) => objects.set(key, new Blob([file])),
         get: async (key: string) => objects.has(key)
           ? { body: objects.get(key)?.stream() } : null,
-        delete: async (key: string) => objects.delete(key),
+        delete: async (keys: string | string[]) => {
+          for (const key of [keys].flat()) objects.delete(key);
+        },
       },
     } as unknown as Env;
     await migrate("0002_public_request_tracking.sql");
     await migrate("0003_public_assessment_workflow.sql");
     await migrate("0004_admin_auth.sql");
     await migrate("0005_admin_password.sql");
+    await migrate("0006_admin_request_management.sql");
     mockFetch = vi.fn<typeof fetch>(async (resource, options) => {
       const url = new URL(String(resource));
       // workerd only supports "follow" or "manual"; the agent must refuse redirected evidence.
@@ -451,6 +454,7 @@ describe("assessment and reviewer workflow", () => {
       createHash("sha256").update(legacyCookie).digest("hex"), "451", "legacy-reviewer", 2147483647,
     );
     await migrate("0005_admin_password.sql");
+    await migrate("0006_admin_request_management.sql");
     expect(await (await track(receipt)).json()).toEqual({
       id: receipt.id, status: "Submitted", createdAt: receipt.createdAt, updatedAt: receipt.updatedAt,
     });
@@ -755,6 +759,20 @@ describe("assessment and reviewer workflow", () => {
       "Submitted", "Analyzing", "Pending Review", "Approved",
     ]);
     expect(mockFetch.mock.calls.filter(([url]) => String(url).startsWith("https://api.openai.com/"))).toHaveLength(1);
+
+    expect(() => db.prepare("DELETE FROM public_review_decisions WHERE request_id = ?").run(receipt.id)).toThrow(/append-only/);
+    expect(() => db.prepare("DELETE FROM public_request_status_history WHERE request_id = ?").run(receipt.id)).toThrow(/append-only/);
+    expect(await (await adminCall("requests/manage", { action: "delete", ids: [receipt.id] })).json()).toEqual({ changed: 1 });
+    expect((await track(receipt)).status).toBe(404);
+    expect((await adminCall(path)).status).toBe(404);
+    expect((await track(other)).status).toBe(200);
+    expect(db.prepare("SELECT * FROM public_review_decisions").all()).toHaveLength(0);
+    expect(db.prepare("SELECT * FROM public_agent_runs").all()).toHaveLength(0);
+    expect(db.prepare("SELECT * FROM public_assessment_drafts").all()).toHaveLength(0);
+    expect(db.prepare("SELECT * FROM public_assessment_evidence").all()).toHaveLength(0);
+    expect(db.prepare("SELECT request_id, action, actor FROM public_request_management_events").all()).toEqual([
+      { request_id: receipt.id, action: "delete", actor: reviewerActor },
+    ]);
   });
 
   it.each(["Rejected", "Needs More Information"])("reports %s without notes or draft when AI is unconfigured", async (decision) => {
@@ -828,5 +846,71 @@ describe("assessment and reviewer workflow", () => {
     expect(image.headers.get("Content-Type")).toBe("image/png");
     expect(image.headers.get("Cache-Control")).toBe("no-store");
     expect(new Uint8Array(await image.arrayBuffer())).toEqual(new Uint8Array(png));
+
+    expect(await (await adminCall("requests/manage", { action: "delete", ids: [receipt.id] })).json()).toEqual({ changed: 1 });
+    expect((await adminCall(imageRoute)).status).toBe(404);
+    expect(objects.size).toBe(1);
+    const deleteObjects = env.IMAGES.delete;
+    env.IMAGES.delete = async () => { throw new Error("Temporary R2 failure"); };
+    env.AGENT_ENABLED = "false";
+    await scheduled();
+    expect(db.prepare("SELECT object_key FROM public_request_image_deletions").all()).toHaveLength(1);
+    env.IMAGES.delete = deleteObjects;
+    await scheduled();
+    expect(objects.size).toBe(0);
+    expect(db.prepare("SELECT object_key FROM public_request_image_deletions").all()).toHaveLength(0);
+  });
+
+  it("archives and restores selected requests without changing the receipt or processing archived requests", async () => {
+    const receipt = await (await post(input)).json();
+    const path = "requests/" + receipt.id;
+    const archive = { action: "archive", ids: [receipt.id] };
+    expect((await adminCall("requests/manage", archive, "")).status).toBe(401);
+    expect((await adminCall("requests/manage", archive, session, adminOrigin, "wrong")).status).toBe(403);
+    expect(await (await adminCall("requests/manage", archive)).json()).toEqual({ changed: 1 });
+    expect(await (await adminCall("requests/manage", archive)).json()).toEqual({ changed: 0 });
+    expect(await (await adminCall("requests")).json()).toMatchObject({ requests: [] });
+    expect(await (await adminCall("requests?archived=true")).json()).toMatchObject({ requests: [{ id: receipt.id }] });
+    expect(await (await adminCall(path)).json()).toMatchObject({ archivedAt: expect.any(String), status: "Submitted" });
+    await scheduled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(await (await track(receipt)).json()).toMatchObject({ status: "Submitted" });
+    expect(await (await adminCall("requests/manage", { ...archive, action: "restore" })).json()).toEqual({ changed: 1 });
+    expect(await (await adminCall(path)).json()).toMatchObject({ archivedAt: null });
+    await scheduled();
+    const detail = await (await adminCall(path)).json();
+    expect(detail.status).toBe("Pending Review");
+    await adminCall("requests/manage", archive);
+    expect((await adminCall(path + "/retry", { runId: detail.run.id })).status).toBe(409);
+    expect((await adminCall(path + "/decision", {
+      runId: detail.run.id, decision: "Rejected", notes: "Fixture decision",
+    })).status).toBe(409);
+  });
+
+  it("commits bulk deletion atomically and preserves paging after a cursor record is deleted", async () => {
+    const ids = Array.from({ length: 32 }, () => randomUUID());
+    const insert = db.prepare("INSERT INTO public_requests VALUES (?, ?, 'Submitted', ?, ?)");
+    ids.forEach((id, index) => {
+      const time = new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString();
+      insert.run(id, JSON.stringify(input), time, time);
+    });
+    const firstPage = await (await adminCall("requests")).json();
+    expect(firstPage.requests).toHaveLength(30);
+    const [firstId, cursorId] = [firstPage.requests[0].id, firstPage.requests.at(-1).id];
+    db.exec(`CREATE TRIGGER test_reject_delete BEFORE DELETE ON public_requests WHEN OLD.id = '${cursorId}'
+      BEGIN SELECT RAISE(ABORT, 'Fixture failure'); END;`);
+    const deletion = { action: "delete", ids: [firstId, cursorId] };
+    expect((await adminCall("requests/manage", { ...deletion, ids: [] })).status).toBe(400);
+    expect((await adminCall("requests/manage", { ...deletion, ids })).status).toBe(400);
+    expect((await adminCall("requests/manage", deletion)).status).toBe(503);
+    expect(db.prepare("SELECT * FROM public_request_management_events").all()).toHaveLength(0);
+    expect((await adminCall(`requests/${firstId}`)).status).toBe(200);
+    db.exec("DROP TRIGGER test_reject_delete");
+    expect(await (await adminCall("requests/manage", deletion)).json()).toEqual({ changed: 2 });
+    expect(await (await adminCall("requests/manage", deletion)).json()).toEqual({ changed: 0 });
+    const next = await (await adminCall("requests?after=" + encodeURIComponent(firstPage.next))).json();
+    expect(next.requests.map(({ id }: { id: string }) => id)).toEqual(ids.slice(0, 2).reverse());
+    expect(next.next).toBeNull();
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 });
