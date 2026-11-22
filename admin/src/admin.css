@@ -61,22 +61,6 @@
   margin: 20px clamp(16px, 4vw, 48px) 0;
 }
 
-.admin-shell .request-row {
-  padding-inline: clamp(12px, 2vw, 18px);
-  border: 1px solid transparent;
-  border-radius: 16px;
-}
-
-.admin-shell .request-row:is(:hover, :focus-visible, :active) {
-  background: var(--bg);
-  border-color: var(--line);
-}
-
-.admin-shell .request-row > div {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 @media (max-width: 540px) {
   .admin-shell .page {
     padding-inline: 16px;

@@ -42,7 +42,7 @@ export function createLabTheme(
         defaultProps: { disableElevation: true },
         styleOverrides: {
           root: {
-            borderRadius: 24,
+            borderRadius: "var(--shape-full)",
             minHeight: 44,
             padding: "10px 22px",
             fontSize: 14,
