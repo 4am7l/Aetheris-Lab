@@ -2,6 +2,8 @@
 
 Open the dedicated admin Pages project at `https://aetheris-admin.pages.dev/` or its configured hostname. Enter the admin password and choose **Sign in**. The Worker verifies the password and creates a host-only reviewer session that expires eight hours after sign-in. It checks that session on every protected request. **Sign out** ends the current session.
 
+The administrator chooses the password directly in the Cloudflare Dashboard as the `aetheris-lab-api` Worker's `ADMIN_PASSWORD` Secret. Editing that secret and deploying it for all traffic invalidates existing sessions; reviewers must sign in with the new password. No hashes, password generator, code changes, or migrations are needed. Use a new password each time; do not restore a previous secret or Worker version containing it. See [Cloudflare configuration](cloudflare.md#2-set-the-admin-password-in-the-cloudflare-dashboard) for the initial switch and rotation steps.
+
 1. Select a status filter and open a request. The detail page shows the original submission, private photos, current agent run, timestamped source evidence, and the audit history.
 2. Verify the references and resolve uncertainties before deciding. Catalog matches identify reference records. The physical samples and their formulations still require verification. AI entries are source flags for expert review.
 3. Choose **Approve & publish**, **Reject**, or **Request more information**. Enter private notes for the audit. For approval, write the public assessment, select retrieved citations or add verified references, and attest that the evidence supports the assessment. A compatible classification requires a reviewer-supplied reference for the exact formulation and conditions.

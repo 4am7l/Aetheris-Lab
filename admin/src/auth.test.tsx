@@ -8,7 +8,7 @@ import App from "./App";
 declare const jsdom: { window: { localStorage: Storage; FormData: typeof FormData } };
 
 const fetchMock = vi.fn<typeof fetch>();
-const password = "a".repeat(42) + "A";
+const password = "Test only: chosen reviewer password!";
 const csrfToken = "b".repeat(64);
 
 beforeEach(() => {

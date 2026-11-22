@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -284,10 +284,10 @@ const proxySecret = "1".repeat(64);
 const sessionCookie = "__Host-aetheris-session";
 const reviewer = { login: "admin" };
 const reviewerActor = "password:admin";
-const password = Buffer.alloc(32, 0x42).toString("base64url");
-const wrongPassword = Buffer.alloc(32, 0x24).toString("base64url");
-const passwordHash = (value: string) => `sha256$${createHash("sha256").update(value).digest("hex")}`;
-const fixturePasswordHash = passwordHash(password);
+// Test-only values. Production passwords are chosen in Cloudflare, never in source.
+const password = "Test only: reviewer passphrase! 42";
+const wrongPassword = "Test only: incorrect password! 42";
+const nativePasswordComparison = vi.fn(timingSafeEqual);
 const approvalNotes = "Private laboratory review notes";
 const documented = {
   a: { ...blankSolution, name: "Glycerol", formula: "C3H8O3", notes: "Private sample note" },
@@ -308,6 +308,15 @@ describe("assessment and reviewer workflow", () => {
   let onLookup: (() => Promise<void>) | undefined;
   let badOutput = false;
   const objects = new Map<string, Blob>();
+
+  beforeAll(() => {
+    // Node lacks Workers' SubtleCrypto extension; use Node's native equivalent in tests.
+    Object.defineProperty(crypto.subtle, "timingSafeEqual", { configurable: true, value: nativePasswordComparison });
+  });
+
+  afterAll(() => {
+    Reflect.deleteProperty(crypto.subtle, "timingSafeEqual");
+  });
 
   function reviewerRequest(path: string, init: RequestInit = {}) {
     const headers = new Headers(init.headers);
@@ -344,7 +353,7 @@ describe("assessment and reviewer workflow", () => {
     expect(response.status).toBe(200);
     const cookie = browserCookie(response, sessionCookie) ?? "";
     const browserSession = cookie.split(";", 1)[0];
-    const body = await response.json() as { reviewer: typeof reviewer; csrfToken: string };
+    const body = await response.clone().json() as { reviewer: typeof reviewer; csrfToken: string };
     return { response, cookie, session: browserSession, ...body };
   }
 
@@ -359,7 +368,7 @@ describe("assessment and reviewer workflow", () => {
       TRACKING_LIMIT: testLimiter(30),
       ADMIN_ORIGIN: adminOrigin,
       ADMIN_PROXY_SECRET: proxySecret,
-      ADMIN_PASSWORD_HASH: fixturePasswordHash,
+      ADMIN_PASSWORD: password,
       AGENT_ENABLED: "true",
       IMAGES: {
         put: async (key: string, file: ArrayBuffer) => objects.set(key, new Blob([file])),
@@ -487,10 +496,39 @@ describe("assessment and reviewer workflow", () => {
       expect(rejected.headers.has("Access-Control-Allow-Origin")).toBe(false);
     }
     expect(await (await adminCall("session")).json()).toEqual({ reviewer, csrfToken });
-    env.ADMIN_PASSWORD_HASH = "invalid-hash";
-    expect((await login({ password })).status).toBe(503);
-    delete env.ADMIN_PASSWORD_HASH;
-    expect((await adminCall("requests")).status).toBe(503);
+  });
+
+  it.each([undefined, ""])("fails closed for missing or empty ADMIN_PASSWORD (%s)", async (value) => {
+    env.ADMIN_PASSWORD = value;
+    const count = db.prepare("SELECT COUNT(*) AS count FROM admin_sessions").get()?.count;
+    for (const response of [await login({ password }), await adminCall("session"), await adminCall("requests")]) {
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "SERVICE_UNAVAILABLE" });
+      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+    }
+    expect(db.prepare("SELECT COUNT(*) AS count FROM admin_sessions").get()?.count).toBe(count);
+  });
+
+  it.each(["x", "  spaces stay significant  ", "كلمة مرور 🔐 café", "x".repeat(128)])(
+    "accepts the exact chosen password without the old generator format (%s)", async (chosen) => {
+      env.ADMIN_PASSWORD = chosen;
+      const signedIn = await signIn(chosen);
+      expect((await adminCall("session", undefined, signedIn.session)).status).toBe(200);
+      expect((await login({ password: chosen + "x" })).status).toBe(401);
+    },
+  );
+
+  it("uses a native timing-safe comparison for matches, mismatches and different lengths", async () => {
+    for (const value of [password, wrongPassword, password.slice(1), password + "x", ""]) {
+      nativePasswordComparison.mockClear();
+      const response = await login({ password: value });
+      expect(response.status).toBe(value === password ? 200 : 401);
+      expect(nativePasswordComparison).toHaveBeenCalledTimes(1);
+      const [candidate, expected] = nativePasswordComparison.mock.calls[0];
+      expect(candidate.byteLength).toBe(expected.byteLength);
+      if (response.status === 401) expect(response.headers.getSetCookie()).toEqual([]);
+    }
   });
 
   it("verifies the password and issues an independent host-only session", async () => {
@@ -512,9 +550,12 @@ describe("assessment and reviewer workflow", () => {
     const stored = db.prepare("SELECT * FROM admin_sessions").all();
     expect(stored).toHaveLength(2);
     for (const row of stored) expect(row.token_sha256).toMatch(/^[a-f0-9]{64}$/);
-    for (const credential of [raw, password, fixturePasswordHash]) {
+    for (const credential of [raw, password]) {
       expect(JSON.stringify(stored)).not.toContain(credential);
     }
+    expect(JSON.stringify(db.prepare("SELECT * FROM admin_login_attempts").all())).not.toContain(password);
+    expect(JSON.stringify(await signedIn.response.clone().json())).not.toContain(password);
+    expect(JSON.stringify([...signedIn.response.headers])).not.toContain(password);
     expect(await (await adminCall("session", undefined, signedIn.session)).json()).toEqual({
       reviewer, csrfToken: signedIn.csrfToken,
     });
@@ -614,11 +655,17 @@ describe("assessment and reviewer workflow", () => {
     expect(db.prepare("SELECT COUNT(*) AS count FROM admin_sessions").get()?.count).toBe(1);
   });
 
-  it("invalidates prior sessions when the password verifier changes", async () => {
-    env.ADMIN_PASSWORD_HASH = passwordHash(wrongPassword);
-    expect((await adminCall("session")).status).toBe(401);
+  it.each([wrongPassword, password + "\0"])("invalidates prior sessions and mutations when only ADMIN_PASSWORD changes", async (newPassword) => {
+    const other = await signIn();
+    env.ADMIN_PASSWORD = newPassword;
+    for (const old of [session, other.session]) {
+      expect((await adminCall("session", undefined, old)).status).toBe(401);
+      expect((await adminCall("requests", undefined, old)).status).toBe(401);
+      expect((await adminCall("auth/logout", {}, old)).status).toBe(401);
+      expect((await adminCall("requests/" + randomUUID() + "/decision", {}, old)).status).toBe(401);
+    }
     expect((await login({ password })).status).toBe(401);
-    const rotated = await signIn(wrongPassword);
+    const rotated = await signIn(newPassword);
     expect(await (await adminCall("session", undefined, rotated.session)).json()).toEqual({
       reviewer, csrfToken: rotated.csrfToken,
     });

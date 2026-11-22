@@ -1,10 +1,10 @@
-import type { D1Database } from "@cloudflare/workers-types";
+import type { D1Database, SubtleCrypto } from "@cloudflare/workers-types";
 import { error, hex, json, readJson } from "./http";
 
 export interface ReviewerAuthEnv {
   ADMIN_ORIGIN?: string;
   ADMIN_PROXY_SECRET?: string;
-  ADMIN_PASSWORD_HASH?: string;
+  ADMIN_PASSWORD?: string;
 }
 
 export const reviewerId = "password:admin";
@@ -15,20 +15,19 @@ const loginWindowSeconds = 15 * 60;
 const attemptsPerClient = 5;
 const attemptsTotal = 30;
 const tokenPattern = /^[a-f0-9]{64}$/;
-const passwordPattern = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
 
 export function adminConfig(env: ReviewerAuthEnv) {
   const origin = env.ADMIN_ORIGIN;
   const proxySecret = env.ADMIN_PROXY_SECRET;
-  const passwordDigest = /^sha256\$([a-f0-9]{64})$/.exec(env.ADMIN_PASSWORD_HASH ?? "")?.[1];
-  if (!origin || !proxySecret || !tokenPattern.test(proxySecret) || !passwordDigest) return null;
+  const password = env.ADMIN_PASSWORD;
+  if (!origin || !proxySecret || !tokenPattern.test(proxySecret) || typeof password !== "string" || !password) return null;
   try {
     const url = new URL(origin);
     if (url.protocol !== "https:" || url.origin !== origin) return null;
   } catch {
     return null;
   }
-  return { origin, proxySecret, passwordDigest };
+  return { origin, proxySecret, password };
 }
 
 type Config = NonNullable<ReturnType<typeof adminConfig>>;
@@ -53,9 +52,26 @@ async function sha256(value: string) {
   return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))));
 }
 
-function tokenHash(token: string, config: Config) {
-  // Deriving the lookup key from the verifier invalidates sessions when the password rotates.
-  return sha256("session:" + config.passwordDigest + ":" + token);
+async function tokenHash(token: string, config: Config) {
+  // Only a per-session HMAC goes to D1. A changed password cannot look up old sessions.
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    // Frame the key so passwords differing by trailing NUL bytes cannot share an HMAC key.
+    "raw", encoder.encode(JSON.stringify(config.password)), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  return hex(new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode("session:" + token))));
+}
+
+function matchesPassword(candidate: string, expected: string) {
+  const encoder = new TextEncoder();
+  const submitted = encoder.encode(candidate);
+  const configured = encoder.encode(expected);
+  // Workers' native constant-time comparison requires equal-length buffers. Always call it,
+  // including on a length mismatch, following Cloudflare's timingSafeEqual guidance.
+  const subtle = crypto.subtle as SubtleCrypto;
+  return submitted.byteLength === configured.byteLength
+    ? subtle.timingSafeEqual(submitted, configured)
+    : !subtle.timingSafeEqual(submitted, submitted);
 }
 
 function csrfToken(token: string) {
@@ -111,8 +127,7 @@ export async function reviewerLogin(request: Request, db: D1Database, config: Co
   if (!await reserveLoginAttempt(request, db, config)) {
     return error("RATE_LIMITED", 429, { "Retry-After": String(loginWindowSeconds) });
   }
-  // The setup script generates the password from 32 random bytes, encoded as unpadded base64url.
-  if (!passwordPattern.test(input.password) || !matchesToken(await sha256(input.password), config.passwordDigest)) {
+  if (!matchesPassword(input.password, config.password)) {
     return error("UNAUTHORIZED", 401);
   }
 

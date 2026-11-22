@@ -14,5 +14,5 @@ PUBLIC_ORIGINS=
 # Reviewer authentication. Set the origin and the same proxy secret in admin Pages Functions.
 ADMIN_ORIGIN=
 ADMIN_PROXY_SECRET=
-# Worker only. Use a separate local password verifier. See docs/cloudflare.md.
-ADMIN_PASSWORD_HASH=
+# Worker only. Choose a separate local password; never commit .dev.vars. See docs/cloudflare.md.
+ADMIN_PASSWORD=
