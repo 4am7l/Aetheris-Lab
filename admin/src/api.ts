@@ -1,5 +1,5 @@
 import type { PublicRequestStatus } from "../../src/domain";
-import type { AdminRequestDetail, AdminRequestList } from "../../src/review";
+import type { AdminManageAction, AdminRequestDetail, AdminRequestList } from "../../src/review";
 
 const root = "/api/admin/requests";
 export const sessionQueryKey = ["reviewer-session"] as const;
@@ -57,11 +57,16 @@ export async function adminSignOut(csrfToken: string) {
   }
 }
 
-export function adminList(status: PublicRequestStatus | "", after: string | null, signal: AbortSignal) {
+export function adminList(status: PublicRequestStatus | "", archived: boolean, after: string | null, signal: AbortSignal) {
   const query = new URLSearchParams();
   if (status) query.set("status", status);
+  if (archived) query.set("archived", "true");
   if (after) query.set("after", after);
   return adminRequest<AdminRequestList>(root + "?" + query.toString(), signal);
+}
+
+export function adminManage(action: AdminManageAction, ids: string[], csrfToken: string) {
+  return adminRequest<{ changed: number }>(root + "/manage", undefined, { action, ids }, csrfToken);
 }
 
 export function adminDetail(id: string, signal: AbortSignal) {

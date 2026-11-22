@@ -97,9 +97,17 @@ export const reviewInputSchema = z.discriminatedUnion("decision", [
   }),
 ]);
 export const retryInputSchema = z.strictObject({ runId: publicRequestIdSchema });
+export const adminManageLimit = 30;
+const adminManageActions = ["archive", "restore", "delete"] as const;
+export type AdminManageAction = typeof adminManageActions[number];
+export const adminManageSchema = z.strictObject({
+  action: z.enum(adminManageActions),
+  ids: z.array(publicRequestIdSchema).min(1).max(adminManageLimit),
+});
 
 export interface AdminRequestDetail {
   id: string;
+  archivedAt: string | null;
   status: import("./domain").PublicRequestStatus;
   createdAt: string;
   updatedAt: string;

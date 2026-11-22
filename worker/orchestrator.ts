@@ -49,7 +49,7 @@ export async function processNextRequest(env: AgentEnv) {
   const run = await db.prepare(
     `INSERT INTO public_agent_runs (id, request_id, status, started_at, lease_until, provider, model)
      SELECT ?, request_id, 'running', ?, ?, ?, ? FROM public_request_workflow
-     WHERE status = 'Submitted'
+     WHERE status = 'Submitted' AND archived_at IS NULL
      ORDER BY updated_at, request_id LIMIT 1
      RETURNING request_id AS requestId`,
   ).bind(runId, timestamp, new Date(now.getTime() + leaseMs).toISOString(),

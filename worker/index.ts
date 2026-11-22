@@ -11,7 +11,7 @@ import {
   type ReviewerAuthEnv,
 } from "./auth";
 import { error, hex, json } from "./http";
-import { readSubmission, storeImages } from "./images";
+import { deleteQueuedImages, readSubmission, storeImages } from "./images";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -230,6 +230,6 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env) {
-    await processNextRequest(env);
+    await Promise.all([processNextRequest(env), deleteQueuedImages(env.DB, env.IMAGES)]);
   },
 };
