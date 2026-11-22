@@ -123,17 +123,21 @@ export const publicInputSchema = requestInputSchema.strict().extend({
 export const publicRequestPath = "/api/requests";
 export const publicRequestMaxBytes = 32 * 1024;
 export const publicRequestIdSchema = z.uuidv4();
-export const publicReceiptSchema = z.object({
+export const publicRequestStatuses = [
+  "Submitted", "Analyzing", "Pending Review", "Approved", "Rejected", "Needs More Information",
+] as const;
+export const publicRequestStatusSchema = z.enum(publicRequestStatuses);
+export type PublicRequestStatus = z.infer<typeof publicRequestStatusSchema>;
+const receiptMetadata = z.object({
   id: publicRequestIdSchema,
-  status: z.literal("Submitted"),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
 export const trackingTokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
-export const createdReceiptSchema = publicReceiptSchema.extend({
+export const createdReceiptSchema = receiptMetadata.extend({
+  status: z.literal("Submitted"),
   trackingToken: trackingTokenSchema,
 });
-export type PublicReceipt = z.infer<typeof publicReceiptSchema>;
 export type CreatedReceipt = z.infer<typeof createdReceiptSchema>;
 
 export const localRequestSchema = requestInputSchema.extend({
@@ -191,6 +195,13 @@ export const finalResultSchema = z.object({
   decision: z.literal("approved"),
 });
 export type ApprovedResult = z.infer<typeof finalResultSchema>;
+export const publicResultSchema = finalResultSchema.omit({ reviewerId: true, decision: true });
+export type PublicResult = z.infer<typeof publicResultSchema>;
+export const publicReceiptSchema = z.discriminatedUnion("status", [
+  receiptMetadata.extend({ status: publicRequestStatusSchema.exclude(["Approved"]) }),
+  receiptMetadata.extend({ status: z.literal("Approved"), result: publicResultSchema }),
+]);
+export type PublicReceipt = z.infer<typeof publicReceiptSchema>;
 export function validateImage(file: Pick<File, "type" | "size">) {
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type))
     return "Choose a JPEG, PNG, or WebP image.";

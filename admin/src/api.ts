@@ -1,10 +1,12 @@
-import type { AdminRequestDetail, AdminRequestList, PublicRequestStatus } from "./review";
+import type { PublicRequestStatus } from "../../src/domain";
+import type { AdminRequestDetail, AdminRequestList } from "../../src/review";
 
 const root = "/api/admin/requests";
 export const sessionQueryKey = ["reviewer-session"] as const;
 
 interface ReviewerSession {
-  login: string;
+  reviewer: { login: string };
+  csrfToken: string;
 }
 
 export class AdminError extends Error {
@@ -13,21 +15,22 @@ export class AdminError extends Error {
   }
 }
 
-async function adminRequest<T>(path: string, signal?: AbortSignal, body?: unknown): Promise<T> {
+async function adminRequest<T>(path: string, signal?: AbortSignal, body?: unknown, csrfToken?: string): Promise<T> {
+  const headers = new Headers();
+  if (body !== undefined) headers.set("Content-Type", "application/json");
+  if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
   const response = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
     cache: "no-store",
     credentials: "same-origin",
     redirect: "error",
     signal: AbortSignal.any([AbortSignal.timeout(15_000), ...(signal ? [signal] : [])]),
-    ...(body === undefined ? {} : {
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) throw new AdminError(response.status);
-  if (!response.headers.get("Content-Type")?.includes("application/json")) {
-    // A static Pages deployment can serve index.html for this URL.
+  if (response.headers.get("Content-Type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
+    // Static-only Pages deployments can serve index.html on API URLs.
     throw new AdminError(404);
   }
   return response.json() as Promise<T>;
@@ -42,9 +45,13 @@ export async function adminSession(signal: AbortSignal): Promise<ReviewerSession
   }
 }
 
-export async function adminSignOut() {
+export function adminSignIn(password: string) {
+  return adminRequest<ReviewerSession>("/api/admin/auth/login", undefined, { password });
+}
+
+export async function adminSignOut(csrfToken: string) {
   try {
-    await adminRequest("/api/admin/auth/logout", undefined, {});
+    await adminRequest("/api/admin/auth/logout", undefined, {}, csrfToken);
   } catch (error) {
     if (!(error instanceof AdminError) || error.status !== 401) throw error;
   }
@@ -61,8 +68,8 @@ export function adminDetail(id: string, signal: AbortSignal) {
   return adminRequest<AdminRequestDetail>(root + "/" + id, signal);
 }
 
-export function adminAction(id: string, action: "decision" | "retry", body: unknown) {
-  return adminRequest<{ status: PublicRequestStatus }>(root + "/" + id + "/" + action, undefined, body);
+export function adminAction(id: string, action: "decision" | "retry", body: unknown, csrfToken: string) {
+  return adminRequest<{ status: PublicRequestStatus }>(root + "/" + id + "/" + action, undefined, body, csrfToken);
 }
 
 export function adminImage(id: string, imageId: string) {

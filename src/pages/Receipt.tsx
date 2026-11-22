@@ -2,6 +2,8 @@ import Button from "@mui/material/Button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { ApprovedResultPanel } from "../components/ApprovedResultPanel";
+import { statusLabel } from "../reviewText";
 import PageHeading from "../components/PageHeading";
 import type { PublicReceipt } from "../domain";
 import { trackRequest, type RequestError } from "../services/publicRequests";
@@ -29,6 +31,9 @@ export default function Receipt() {
     networkMode: "always",
     retry: false,
     refetchOnReconnect: false,
+    refetchInterval: ({ state }) => !state.error &&
+      (state.data?.status === "Submitted" || state.data?.status === "Analyzing" || state.data?.status === "Pending Review")
+      ? 30_000 : false,
   });
   const cooldown = useRetryDelay(tracking.error?.retryAt ?? 0);
   const receipt = tracking.data ?? saved;
@@ -78,7 +83,7 @@ export default function Receipt() {
               </div>
               <div>
                 <span>{t("status")}</span>
-                <strong>{t("submitted")}</strong>
+                <strong>{t(statusLabel[receipt.status])}</strong>
               </div>
             </div>
           )}
@@ -132,11 +137,16 @@ export default function Receipt() {
           )}
         </>
       )}
-      <div className="result-locked">
-        <Icon name="lock" />
-        <h2>{t("noVerdict")}</h2>
-        <p>{t("reviewText")}</p>
-      </div>
+      {saved && !tracking.isError && tracking.data?.status === "Approved" ? (
+        <ApprovedResultPanel result={tracking.data.result} />
+      ) : (
+        <div className="result-locked">
+          <Icon name="lock" />
+          <h2>{t("noVerdict")}</h2>
+          <p>{t(receipt?.status === "Rejected" ? "receiptRejected"
+            : receipt?.status === "Needs More Information" ? "receiptNeedsMore" : "reviewText")}</p>
+        </div>
+      )}
     </div>
   );
 }

@@ -250,6 +250,31 @@ describe("real submission", () => {
 });
 
 describe("receipt tracking", () => {
+  it("shows current progress and reveals a result only after approved tracking data arrives", async () => {
+    const result = {
+      classification: "Insufficient information",
+      conditions: "Reviewed conditions",
+      hazards: [], incompatibilities: [], storage: "Not assessed", container: "Not assessed",
+      limitations: ["No matching formulation data"],
+      sources: [{ title: "Scientific reference", url: "https://www.cdc.gov/niosh/npg/npg.html" }],
+      reviewedAt: receipt.updatedAt,
+    };
+    saveReceipt({ ...receipt, trackingToken: token });
+    fetchMock.mockResolvedValueOnce(Response.json({ ...receipt, status: "Pending Review", result }))
+      .mockResolvedValueOnce(Response.json({ ...receipt, status: "Approved", result }));
+    mount(receiptPath);
+    expect(await screen.findByText(en.pendingReviewStatus)).toBeTruthy();
+    expect(screen.getByText(en.noVerdict)).toBeTruthy();
+    expect(screen.queryByText(result.conditions)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: en.refreshReceipt }));
+    expect(await screen.findByRole("heading", { name: en.insufficientResult })).toBeTruthy();
+    expect(screen.getByText(result.conditions)).toBeTruthy();
+    expect(screen.queryByText(en.noVerdict)).toBeNull();
+    expect(localStorage.getItem(storageKey)).not.toContain(result.conditions);
+    expect(document.body.textContent).not.toContain(token);
+  });
+
   it("uses the saved token after remount and removes it on confirmation", async () => {
     saveReceipt({ ...receipt, trackingToken: token });
     fetchMock.mockResolvedValue(Response.json(receipt));

@@ -1,8 +1,8 @@
-@import "tailwindcss";
+@import "tailwindcss" source(".");
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 @font-face {
   font-family: "Aetheris Samsung";
-  src: url("/fonts/samsung.ttf") format("truetype");
+  src: url("./assets/samsung.ttf") format("truetype");
   font-style: normal;
   font-weight: 400;
   font-display: swap;

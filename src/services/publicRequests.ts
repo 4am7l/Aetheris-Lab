@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   createdReceiptSchema,
   publicInputSchema,
@@ -39,7 +40,7 @@ async function request(
   expectedStatus: 200 | 201,
 ) {
   const posting = expectedStatus === 201;
-  const timeout = AbortSignal.timeout(15_000);
+  const timeout = AbortSignal.timeout(options.body instanceof FormData ? 45_000 : 15_000);
   const signal = options.signal
     ? AbortSignal.any([options.signal, timeout])
     : timeout;
@@ -81,7 +82,7 @@ async function readJson(response: Response) {
   }
 }
 
-export async function submitRequest(input: RequestInput) {
+export async function submitRequest(input: RequestInput, photos?: { imageA?: File; imageB?: File }) {
   const parsed = publicInputSchema.safeParse(input);
   if (!parsed.success) throw new RequestError("validation");
   const body = JSON.stringify(parsed.data);
@@ -89,12 +90,18 @@ export async function submitRequest(input: RequestInput) {
     throw new RequestError("validation");
   }
 
+  const form = photos?.imageA || photos?.imageB ? new FormData() : undefined;
+  if (form) {
+    form.set("input", body);
+    if (photos?.imageA) form.set("imageA", photos.imageA);
+    if (photos?.imageB) form.set("imageB", photos.imageB);
+  }
   const response = await request(
     publicRequestPath,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
+      headers: form ? undefined : { "Content-Type": "application/json" },
+      body: form ?? body,
     },
     201,
   );
@@ -121,4 +128,14 @@ export async function trackRequest(id: string, signal?: AbortSignal) {
   if (!receipt.success || receipt.data.id !== id)
     throw new RequestError("unavailable");
   return receipt.data;
+}
+
+
+const healthSchema = z.object({
+  agent: z.enum(["disabled", "configured", "unconfigured"]).optional(),
+});
+
+export async function getServiceStatus(signal: AbortSignal) {
+  const response = await request("/api/health", { signal }, 200);
+  return healthSchema.parse(await readJson(response));
 }

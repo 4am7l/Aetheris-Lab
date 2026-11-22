@@ -1,11 +1,5 @@
 import { z } from "zod";
-import { finalResultSchema, publicRequestIdSchema, type ApprovedResult, type RequestInput } from "../../src/domain";
-
-export const publicRequestStatuses = [
-  "Submitted", "Analyzing", "Pending Review", "Approved", "Rejected", "Needs More Information",
-] as const;
-export type PublicRequestStatus = typeof publicRequestStatuses[number];
-export type PublicResult = Omit<ApprovedResult, "reviewerId" | "decision">;
+import { finalResultSchema, publicRequestIdSchema, type PublicResult, type RequestInput } from "./domain";
 
 export type SolutionSide = "A" | "B";
 export type AgentStatus = "running" | "completed" | "unconfigured" | "failed";
@@ -106,7 +100,7 @@ export const retryInputSchema = z.strictObject({ runId: publicRequestIdSchema })
 
 export interface AdminRequestDetail {
   id: string;
-  status: PublicRequestStatus;
+  status: import("./domain").PublicRequestStatus;
   createdAt: string;
   updatedAt: string;
   input: RequestInput;
@@ -122,14 +116,14 @@ export interface AdminRequestDetail {
   evidence: Evidence[];
   review: { decision: ReviewDecision; reviewerId: string; notes: string; createdAt: string } | null;
   approvedResult: PublicResult | null;
-  history: { id: number; status: PublicRequestStatus; actor: string; createdAt: string }[];
+  history: { id: number; status: import("./domain").PublicRequestStatus; actor: string; createdAt: string }[];
   canRetry: boolean;
 }
 
 export interface AdminRequestList {
   requests: {
     id: string;
-    status: PublicRequestStatus;
+    status: import("./domain").PublicRequestStatus;
     createdAt: string;
     nameA: string;
     nameB: string;

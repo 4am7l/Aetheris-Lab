@@ -19,4 +19,3 @@ jobs:
       - run: npm run worker:check
       - run: npm test
       - run: npm run build
-      - run: npm run build:admin

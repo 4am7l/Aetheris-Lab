@@ -4,9 +4,9 @@ import FormControlLabel from "@mui/material/FormControlLabel";
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import { useState, type FormEvent } from "react";
-import { finalResultSchema } from "../../src/domain";
-import { reviewInputSchema, type AdminRequestDetail, type PublicResult, type ReviewDecision } from "./review";
-import { resultLabel } from "./reviewText";
+import { finalResultSchema, type PublicResult } from "../../src/domain";
+import { reviewInputSchema, type AdminRequestDetail, type ReviewDecision } from "../../src/review";
+import { resultLabel } from "../../src/reviewText";
 import { useAdminText as useText } from "./text";
 import { Notice } from "../../src/ui";
 

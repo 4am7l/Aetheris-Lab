@@ -1,145 +1,64 @@
-# Cloudflare deployment preparation
+# Cloudflare configuration
 
-The Worker supports accountless public intake and tracking using D1. Each public receipt reports the `Submitted` state. Identification, analysis, and review integrations remain disabled. The frontend calls relative `/api` URLs through a Pages Function and a Cloudflare service binding.
+Aetheris Lab uses two independent Cloudflare Pages projects built from `4am7l/Aetheris-Lab`. Both call the existing `aetheris-lab-api` Worker through a Pages service binding. The Worker remains at `https://aetheris-lab-api.4am7l.workers.dev` and keeps its existing D1 database, private R2 bucket, and public API rate-limit bindings. The approved Phase 4 release activates sign-in and the reviewer workflow. The earlier standalone admin build on `main` serves the static interface.
 
-## 1. Verify the source
+## 1. Configure the two Pages projects
 
-```sh
-npm ci
-npm run lint
-npm run typecheck
-npm run worker:check
-npm test
-npm run build
-```
+1. Open **Workers & Pages** in the Cloudflare dashboard. Use the existing public project `aetheris-lab` and admin project `aetheris-admin`. If the admin project is missing, create it through **Create application → Pages → Connect to Git** and select `4am7l/Aetheris-Lab`.
+2. Check the assigned admin hostname. Use that exact HTTPS origin wherever this guide shows `https://aetheris-admin.pages.dev`. The table shows the settings for the approved Phase 4 revision. Use Pages build system v3. Keep the current public build command in place while serving the earlier revision. That revision uses `npm run build`.
 
-## 2. Frontend with Pages
+   | Setting | Public project | Admin project |
+   | --- | --- | --- |
+   | Production URL | `https://aetheris-lab.pages.dev` | `https://aetheris-admin.pages.dev`, subject to availability |
+   | Production branch | `main` | `main` |
+   | Framework preset | None | None |
+   | Root directory | Leave blank (repository root) | `admin` |
+   | Build command | `npm run build:public` | `npm --prefix .. ci && npm --prefix .. run build:admin` |
+   | Build output directory | `dist` | `dist` (repository path `admin/dist`) |
+   | Pages build variables | `NODE_VERSION=26` | `NODE_VERSION=26`, `SKIP_DEPENDENCY_INSTALL=true` |
 
-In Cloudflare Dashboard → Workers & Pages, select the existing Aetheris Lab Pages project for `4am7l/Aetheris-Lab`. For a new staging project, connect the intended Git branch, set framework Vite, root `/`, build command `npm run build`, output `dist`, and Node version 22.12+ (or the validated Node 26). Build from the repository root so Pages finds `functions/` next to `dist/`.
+   The admin command installs from the shared root lockfile. Setting the project root to `admin` makes Pages package `admin/functions/` for that project. The public project packages the root `functions/` directory. Neither application requires a `VITE_*` variable.
+3. Under each project's **Settings → Bindings**, add or retain a **Service binding** named `AETHERIS_API` and select the existing `aetheris-lab-api` Worker for production. In the admin project's **Settings → Variables and Secrets**, add the text variable `ADMIN_ORIGIN` with the exact HTTPS origin and the encrypted secret `ADMIN_PROXY_SECRET`. Generate the proxy secret in a private terminal using `node -p "require('node:crypto').randomBytes(32).toString('hex')"`. Set that same 64-character value as a Worker secret. The public project needs only its service binding at runtime.
+4. Under **Settings → Builds → Branch control**, select **None** for automatic preview deployments unless isolated staging is configured. Pause production auto-deploy before merging the Phase 4 PR. For staging, use a separate Worker, D1 database, private R2 bucket, proxy secret, and generated admin password. Configure the same stable staging HTTPS origin on admin Pages and its Worker. Preview deployment URLs and branch aliases each have their own origins.
 
-In **Settings → Bindings → Add → Service binding**, set the variable name to `AETHERIS_API`. Select `aetheris-lab-api` for the production Pages environment. Its public endpoint is `https://aetheris-lab-api.4am7l.workers.dev`, but the browser reaches it through the binding. For Pages Preview, bind a staging Worker with a separate D1 database. Leave Preview unbound when no staging Worker is available. An unbound API returns `503`. Redeploy the chosen Pages environment after the binding and code are approved.
+Cloudflare references for [Pages monorepo setup](https://developers.cloudflare.com/pages/configuration/monorepos/), [build variables](https://developers.cloudflare.com/pages/configuration/build-image/), [Pages Functions directories](https://developers.cloudflare.com/pages/functions/get-started/#create-a-function), [service bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings), and [branch deployment controls](https://developers.cloudflare.com/pages/configuration/branch-build-controls/).
 
-The bundled `_routes.json` invokes Functions only on `/api/*`. The function forwards `/api/health`, `/api/requests`, and `/api/requests/:id`. Pages serves frontend deep links through its default SPA fallback. Browser requests stay on the Pages origin and keep the existing `connect-src 'self'` policy. This frontend release needs only the Pages binding. Keep request bodies, response bodies, and Authorization headers out of application logs and analytics. Set Pages Functions to fail closed so API routes cannot fall through to the static site when a Functions allowance is exhausted.
+## 2. Generate the admin password and configure the Worker
 
-[Cloudflare Pages service binding setup](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)
+1. From the repository root, run `node scripts/generate-admin-password.mjs` in a private terminal. The script generates 32 random bytes and displays the 43-character base64url password and its SHA-256 verifier. Save the password in your password manager. Use a freshly generated password for each environment. Keep both values out of chat, screenshots, logs, and repository files.
+2. In **Workers & Pages → aetheris-lab-api → Settings → Variables and Secrets**, set the production values below. For `ADMIN_PASSWORD_HASH`, paste the part after `ADMIN_PASSWORD_HASH=` including `sha256$`.
 
-### Verify the deployed frontend
+   | Name | Kind | Value |
+   | --- | --- | --- |
+   | `ADMIN_ORIGIN` | Text | Exact assigned admin HTTPS origin, without a trailing slash |
+   | `ADMIN_PROXY_SECRET` | Secret | Same 64 lowercase hex characters as on admin Pages |
+   | `ADMIN_PASSWORD_HASH` | Secret | The generated verifier in `sha256$<64 lowercase hex characters>` format |
+   | `PUBLIC_ORIGINS` | Optional text | Comma-separated exact origins for browser clients that call the public Worker directly. Leave unset for the standard Pages deployment. |
 
-Use the staging Pages URL as `https://<pages-origin>` for write tests. The production frontend is `https://aetheris-lab.pages.dev`. A submission creates a D1 row in whichever environment its binding selects, so get approval for a production test submission before running the write steps there.
+   Store `ADMIN_PASSWORD_HASH` only on the Worker. Only `ADMIN_ORIGIN` and `ADMIN_PROXY_SECRET` go on admin Pages alongside the service binding. The Worker checks the exact admin origin and proxy credential, then requires a valid session for reviewer data and actions. The public Pages gateway accepts only the health, submissions, and tracking routes. Keep runtime secrets out of `VITE_*` and other build variables.
 
-1. Open `https://<pages-origin>/api/health`. Expect `200`, `submission: true`, `tracking: true`, `identification: false`, and `review: false`.
-2. Open `/analysis`. Choose **Enter manually** for each solution, enter `Sample A` and `Sample B`, and confirm each. Leave the remaining values at **Unknown** or blank as allowed. Add optional conditions and click **Submit request** twice quickly. In the browser Network panel, expect one same-origin `POST /api/requests` with status `201`.
-3. The **Submission receipt** should show `Submitted`, a request ID, and a creation timestamp. Expect a same-origin `GET /api/requests/<id>` with status `200`. Refresh the route and reopen the receipt from **My Requests** using the same browser profile. Scientific results should remain locked.
-4. Use the displayed request ID in the read-only command below. Expect `404` for the deliberately invalid bearer value. Open the receipt URL in a private window and confirm the page reports that the receipt is unavailable.
+## 3. Release the existing Worker and both frontends
 
-   ```sh
-   curl -i 'https://<pages-origin>/api/requests/<id>' \
-     -H 'Authorization: Bearer invalid-test-token'
-   ```
+1. Test against local D1 with `npx wrangler d1 migrations apply DB --local`. For an approved release, verify the configured D1 binding points to the existing database, then run `npx wrangler d1 migrations apply DB --remote` from the repository root. Migration 0003 backfills the public workflow and preserves existing requests and tracking-token hashes. Migration 0004 is retained for databases that already applied it. Migration 0005 invalidates earlier sign-in sessions and adds password sessions and login counters while preserving review records. Keep the `DB`, `IMAGES`, `SUBMISSION_LIMIT`, and `TRACKING_LIMIT` bindings. Keep the R2 bucket's public `r2.dev` URL and any public custom domains disabled.
+2. Publish the existing Worker from the approved revision with `npm run worker:deploy -- --keep-vars` so Wrangler retains the dashboard text variables. Initially leave `AGENT_ENABLED=false` if Phase 4 analysis has yet to start. Keep the Pages runtime settings in place and release both Pages projects from the approved `main` revision. Changes to Pages Functions bindings take effect with a Pages deployment. [Wrangler dashboard variable preservation](https://developers.cloudflare.com/workers/wrangler/configuration/#source-of-truth).
+3. Run the smoke checks below. To enable scheduled analysis, set `AGENT_ENABLED=true` when ready. Wrangler configures one cron tick a minute. Each tick takes the oldest eligible request. Failed or expired runs move to review and can be retried by a reviewer.
 
-5. In the original browser, select **Remove tracking access** and confirm. Confirm that the receipt disappears from **My Requests** and that reopening its URL reports unavailable. This removes the browser credential and leaves the submitted row in D1.
+The optional OpenAI adapter requires `AI_PROVIDER=openai`, `AI_MODEL` set to a Chat Completions model supporting JSON mode, and Worker secrets `AGENT_API_KEY` and `AGENT_SYSTEM_PROMPT`. Use the supplied JSON schema and keep the original review constraints in the prompt. Treat source content as untrusted, flag only documented hazards and explicit pair concerns, make uncertainties explicit, and omit compatibility claims, narrative text, mixing procedures, ratios, and quantities. With no provider configured, the Worker still collects evidence and records that AI screening was unconfigured.
 
-6. Repeat the form and receipt checks in Arabic and on a narrow viewport. For failure and throttling checks, use `npm test` or an isolated staging Worker. The UI waits for `Retry-After` on `429`. A lost submission response can conceal a successful write, so a retry requires explicit confirmation. The Worker does not support idempotency keys.
+[PubChem PUG REST and PUG View](https://pubchem.ncbi.nlm.nih.gov/docs/) and the [NIOSH Pocket Guide](https://www.cdc.gov/niosh/npg/npg.html) supply identity and safety evidence. PubChem receives chemical identifiers. The optional AI adapter receives source excerpts, candidate reference identities, and coded information gaps. Tracking tokens, reviewer data, photos, free-form submission notes, and numeric solution conditions stay out of the AI request.
 
-For local development, follow the [README](../README.md#run-locally). Vite proxies `/api/` requests to the local Worker on port `8787`.
+## API and smoke checks
 
-### Administrator Pages project
+- At the public Pages URL, submit a request and track it with its token. `POST /api/requests` accepts the existing Phase 3 JSON contract. The multipart form supports one `input` JSON string up to 32 KiB and optional `imageA` and `imageB` JPEG, PNG, or WebP files up to 10 MiB each.
+- Check that `GET /api/requests/:id` returns `404` for missing, incorrect, and unrelated tokens. With the matching token, verify that only an approved receipt includes a published result.
+- Open `/admin` on the public project and verify it shows the public app's not-found view. Check that `/api/admin/session` on public Pages returns `404`. On admin Pages, check that an unsigned call to `/api/admin/session` or to a request or photo endpoint returns `401` after configuration.
+- In staging, try a wrong password and verify that the Worker returns `401` without issuing a session. Exercise rate limiting in staging and check for `429` and `Retry-After`. Sign in with the generated password. Refresh the page, inspect the private evidence and photos, record an approval, and verify the matching receipt contains only the reviewer-authored result. Sign out and verify the session no longer works. Use staging data for decision and submission tests.
+- Run `npm run lint`, `npm run typecheck`, `npm run worker:check`, `npm test`, and `npm run build`. To exercise the cron locally, start the Worker with `npx wrangler dev --test-scheduled` and call `http://127.0.0.1:8787/__scheduled`.
 
-The admin frontend builds as a separate static Pages project. Reviewer sign-in and the review queue require the configured Phase 4 backend. For this static deployment, leave runtime bindings and secrets unset.
+## Security limits
 
-| Setting | Value |
-| --- | --- |
-| Production branch | `main` |
-| Framework preset | None |
-| Build system | v3 |
-| Root directory | `admin` |
-| Build command | `npm --prefix .. ci && npm --prefix .. run build:admin` |
-| Build output directory | `dist` |
-| Build variables | `NODE_VERSION=26`, `SKIP_DEPENDENCY_INSTALL=true` |
-
-The command installs dependencies from the shared root lockfile and writes the site to `admin/dist`.
-
-## 3. Configure Worker bindings and migrations
-
-Confirm that the `DB` binding and its database UUID in `wrangler.toml` point to the existing D1 database. Confirm the existing `IMAGES` bucket binding and keep its public access off. Public intake stores JSON in D1.
-
-Migration `0002_public_request_tracking.sql` adds `public_request_tokens`, keyed by request ID. It creates `public_requests` only when missing, as the repository's initial migration does not define it. For an externally provisioned table, confirm that `id` is a text primary key and that `input_json`, `status`, `created_at`, and `updated_at` accept the API's insert with status `Submitted`. Check the existing schema before applying the migration to the remote database. Existing rows require a matching token record to be accessible through the API.
-
-Wrangler configures two [Cloudflare Rate Limiting bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) with separate namespaces. Confirm that IDs `1001` and `1002` are unused by other applications in the account or assign unused IDs before deployment. Submission allows 5 calls/minute and tracking allows 30 calls/minute per `CF-Connecting-IP` at each Cloudflare location. Cloudflare's edge counters are approximate. A missing client IP shares a single bucket. Keep the Cloudflare-provided header on the public ingress route. Intake and tracking require no Cloudflare secrets.
-
-```sh
-npx wrangler d1 migrations apply DB --local
-npm run worker:dev
-```
-
-## Public request API
-
-`POST /api/requests` accepts an uncompressed UTF-8 `application/json` body of at most 32 KiB, with an optional `charset=utf-8` parameter. The required fields are `a`, `b`, and `conditions`. Each solution requires the fields below. Extra fields are rejected.
-
-```json
-{
-  "a": {
-    "name": "Sample A",
-    "formula": "Unknown",
-    "cas": "Unknown",
-    "concentration": "Unknown",
-    "unit": "Unknown",
-    "solvent": "Unknown",
-    "state": "Unknown",
-    "temperature": "Unknown",
-    "quantity": "Unknown",
-    "quantityUnit": "Unknown",
-    "notes": "",
-    "source": "Manual entry"
-  },
-  "b": {
-    "name": "Sample B",
-    "formula": "Unknown",
-    "cas": "Unknown",
-    "concentration": "Unknown",
-    "unit": "Unknown",
-    "solvent": "Unknown",
-    "state": "Unknown",
-    "temperature": "Unknown",
-    "quantity": "Unknown",
-    "quantityUnit": "Unknown",
-    "notes": "",
-    "source": "Manual entry"
-  },
-  "conditions": ""
-}
-```
-
-Names, formulas, CAS numbers, and solvents are trimmed and require 1–200 characters. A known CAS number must have a valid checksum. Numeric values are finite decimal strings or `"Unknown"`. Known concentrations and quantities require units and must be nonnegative. Percentages are limited to 100 and temperature is expressed in °C at or above −273.15. Concentration units are `% w/w`, `% v/v`, `mol/L`, `g/L`, and `Unknown`. Quantity units are `mL`, `L`, `g`, `kg`, and `Unknown`. States are `Liquid`, `Solid`, `Gas`, and `Unknown`. Sources are `Manual entry` and `NIOSH catalog`. Each `notes` field allows up to 2,000 characters and `conditions` allows up to 3,000.
-
-A successful submission returns `201` with `id`, `status`, `createdAt`, `updatedAt`, and `trackingToken`. Save the token from the creation response. The Worker stores its SHA-256 digest and cannot recover the original. Example using the JSON above saved as `request.json` and the local Worker URL:
-
-```sh
-curl -i http://127.0.0.1:8787/api/requests \
-  -H 'Content-Type: application/json' --data-binary @request.json
-curl -i http://127.0.0.1:8787/api/requests/REQUEST_ID \
-  -H 'Authorization: Bearer TRACKING_TOKEN'
-```
-
-`GET /api/requests/:id` accepts the token through the `Authorization` header and returns only `id`, `status`, `createdAt`, and `updatedAt`. Missing or incorrect tokens and unknown IDs all return `404`. Use HTTPS for non-local calls and keep tokens out of URLs and application logs. Both endpoints send `Cache-Control: no-store`. For browser use, serve the frontend and API on the same origin. The tracking token authorizes receipt access.
-
-Invalid JSON or input returns `400`, oversized bodies return `413`, unsupported media types return `415`, and a throttled call returns `429` with `Retry-After: 60`. Storage or binding failures return `503`. The `GET /api/health` response reports readiness for submission and tracking once the bindings and D1 schema are available. Its `identification` and `review` flags remain false.
-
-## 4. Future administrator authentication and integrations
-
-Create a dedicated Cloudflare Access application/policy for administrator service traffic. Configure team domain and audience, implement JWKS signature verification with pinned issuer/audience, and bind verified reviewers to application roles. Implement the contract in `admin-review.md` before enabling review routes.
-
-Worker-only configuration names are listed in `.dev.vars.example`: identity provider URL/key, safety-data provider URL/key, agent key, Admin URL/service token, Access team domain/audience. Add the review signing secret and user authentication configuration when the provider is selected. Store secret values with `npx wrangler secret put NAME`; never prefix a secret with `VITE_` or commit `.dev.vars`. Nonsecret URLs/audience can be Worker vars. This scaffold does not use these values yet.
-
-Implement owner-scoped authenticated access, private image validation and retention, durable orchestration, evidence services, verified administrator review, and final-result display before enabling those integrations.
-
-## 5. Worker deployment
-
-For a production custom domain, set `workers_dev=false` and configure the selected API route in `wrangler.toml` or the dashboard. After the local checks pass, apply the remote migration and deploy when authorized:
-
-```sh
-npx wrangler d1 migrations apply DB --remote
-npx wrangler deploy
-```
-
-In staging, check `/api/health` and verify submission, token-protected lookup and throttling before directing users to the API.
+- The admin login page and its static files are publicly reachable. The Worker gates reviewer data and actions. Its `Secure`, `HttpOnly`, `SameSite=Strict` session cookie stays on the admin hostname. Review changes and sign-out require the same origin and a session-bound CSRF token.
+- Share the generated admin password only with qualified reviewers through a password manager. Audit entries record one shared identity, `password:admin`. Sessions expire after eight hours, and sign-out revokes the current session in D1. To rotate access, generate a fresh password, replace `ADMIN_PASSWORD_HASH` on the Worker, and activate the updated settings. Existing sessions tied to the old verifier then require a fresh sign-in.
+- D1 allows up to 5 login attempts per IP and 30 across all IPs in a rolling 15-minute window. Once a limit is reached, even a valid password must wait until the window frees an attempt. The login limiter stores IP digests.
+- The tracking token is a bearer credential. Anyone holding the matching token can read that request's approved assessment. Keep tokens, passwords, verifiers, and proxy credentials out of support screenshots and logs.
+- Keep preview settings isolated. A new release does not remove historical Pages preview artifacts or rollbacks. Review those separately before using the public and admin projects with production data.

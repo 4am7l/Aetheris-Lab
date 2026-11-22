@@ -1,56 +1,25 @@
-# Aetheris Admin integration contract (version 1)
+# Administrator review
 
-This protocol is preparation for a separate application. No operational review endpoint exists in this release. All `/api/admin/*` routes return 503 until authentication and persistence are implemented. Never use browser storage, a query parameter, an environment flag, or a client-provided `status` as approval authority.
+Open the dedicated admin Pages project at `https://aetheris-admin.pages.dev/` or its configured hostname. Enter the admin password and choose **Sign in**. The Worker verifies the password and creates a host-only reviewer session that expires eight hours after sign-in. It checks that session on every protected request. **Sign out** ends the current session.
 
-## Future server endpoints
+1. Select a status filter and open a request. The detail page shows the original submission, private photos, current agent run, timestamped source evidence, and the audit history.
+2. Verify the references and resolve uncertainties before deciding. Catalog matches identify reference records. The physical samples and their formulations still require verification. AI entries are source flags for expert review.
+3. Choose **Approve & publish**, **Reject**, or **Request more information**. Enter private notes for the audit. For approval, write the public assessment, select retrieved citations or add verified references, and attest that the evidence supports the assessment. A compatible classification requires a reviewer-supplied reference for the exact formulation and conditions.
+4. If an agent run failed, select **Retry analysis** to requeue it. An unconfigured run can be retried once a provider is configured. The previous run, its evidence, and status history remain recorded.
 
-The [public intake API](cloudflare.md#public-request-api) accepts submissions and returns receipt metadata using a tracking token. The owner-scoped analysis and publication behaviors in this table are future requirements.
+Approval publishes the reviewer-authored assessment and its selected references to the corresponding token holder. Rejection and requests for more information publish only status. Private notes, staff identities, submitted photos, evidence excerpts, and draft findings remain in the review area.
 
-| Method/path                              | Required behavior                                                                                                                                         |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| POST `/api/requests`                     | Authenticated owner, strict `RequestInput` schema, bounded body, idempotency key; server generates UUID/timestamp/status; reject approval/reviewer fields |
-| GET `/api/requests`                      | Authenticated owner-scoped pagination; metadata only                                                                                                      |
-| GET `/api/requests/:id`                  | Owner check; no preliminary assessment; expose final result only after durable verified-review lookup                                                     |
-| POST `/api/images`                       | Authenticated bounded upload; sniff/validate bytes and dimensions; re-encode and strip metadata; private R2 key and owner/request binding                 |
-| POST Admin service `/v1/review-requests` | Worker service credentials; idempotency `requestId:assessmentVersion`; bounded request and authoritative source metadata                                  |
-| POST `/api/admin/reviews`                | Authenticated reviewer service, verified Access JWT, application permission, signed body, replay protection, immutable transactional decision             |
-| POST `/api/requests/:id/information`     | Owner-only append; re-run assessment with new version; invalidate earlier approvals                                                                       |
+## Worker API
 
-No GET endpoint may return internal preliminary content. Never implement `PATCH status=Approved` for users.
+| Method and path | Behavior |
+| --- | --- |
+| `POST /api/admin/auth/login` | Verifies the JSON `password` field, sets the session cookie, and returns the session's CSRF token. |
+| `GET /api/admin/session` | Validates the active reviewer session and returns its CSRF token. |
+| `POST /api/admin/auth/logout` | Revokes the active session and clears its cookie. |
+| `GET /api/admin/requests` | Lists requests with optional `status` and `after` filters. |
+| `GET /api/admin/requests/:id` | Reads submitted data, current draft, evidence, review, and audit. |
+| `GET /api/admin/requests/:id/images/:imageId` | Streams one authorized photo from private R2. |
+| `POST /api/admin/requests/:id/retry` | Requeues the specified eligible agent run. |
+| `POST /api/admin/requests/:id/decision` | Records the decision for the current run and updates status atomically. |
 
-## Outbound review submission
-
-```ts
-{
-  schemaVersion: 1,
-  requestId: string,
-  assessmentVersion: number,
-  submittedAt: string, // server ISO-8601
-  userInput: { a: Solution, b: Solution, conditions: string },
-  imageReferences: Array<{ id: string; access: "authenticated-server-only" }>,
-  identificationResults: Identification[], // confirmed identities recorded separately from candidates
-  preliminaryAssessment: PreliminaryAssessment, // notForPublication: true
-  sourceReferences: Evidence[], // URL, retrievedAt, documentHash, bounded excerpt
-  missingInformation: string[]
-}
-```
-
-Chemical names/notes, label text, and source documents are untrusted input, never tool/system instructions. No public image URLs. Admin fetches images through an authenticated short-lived server channel.
-
-## Inbound review
-
-Use `AdminReviewDecision` from `src/services/contracts.ts`: `eventId`, request and assessment version, reviewer identity, decision, reviewedAt, reason, and optional approved result. Bind reviewer identity to verified claims, never the JSON field alone. Approval requires `finalResultSchema`: one of four permitted classifications, documented conditions, evidence sources, limitations, hazards/incompatibilities, storage/container notes (explicitly not assessed when unsupported), reviewer identity and timestamp. Provider output is not a review decision.
-
-Recommended signing envelope: `X-Aetheris-Timestamp` and `X-Aetheris-Signature` = HMAC-SHA256 over timestamp + newline + exact body bytes. Reject timestamps outside a five-minute skew, compare signatures in constant time, require trusted service authentication AND verified Cloudflare Access JWT issuer/audience/expiry/keys. Rotate secrets. Enforce a unique eventId (durable replay prevention). HTTPS only. JWT header presence alone is never proof of authentication.
-
-In one D1 transaction: check current state/version and reviewer role; insert immutable review; append server actor event; update request status. Handle duplicate event IDs idempotently only if the original payload hash matches; conflicting duplicates return 409. Reject stale assessment versions and out-of-order reviews. Do not log raw sensitive documents or tokens.
-
-## Lifecycle
-
-Draft → Submitted → Identifying Chemicals → Analyzing → Awaiting Administrator Review.
-
-Identity or evidence gaps → Additional Information Required or Unable to Determine. Service errors → Failed. Reviewer decision → Approved, Rejected, Additional Information Required or Unable to Determine. Additional information starts a fresh assessment version. Only an approved decision for the current version may unlock a final result; revocation locks it again.
-
-Rejected indicates review rejection, **not** scientific incompatibility. A review stating insufficient information is permitted, but requires explicit approval and limitations like every other published classification. A client must never infer a scientific classification from the status.
-
-`publishableResult` is a server-side predicate, not an authentication mechanism. Its context must come from an authenticated server-owned database query. Test fixtures demonstrating approval are isolated in tests and never shipped as catalog/request data. The UI currently has no approved-result route or local override.
+Sign-in requires the configured admin origin. Sign-out, retry, and decision requests also require the session's `X-CSRF-Token` header. The decision endpoint accepts an explicit current run ID. Concurrent or repeated decisions and actions on superseded runs are rejected. The review event and status history are append-only. New reviewer events use the shared `password:admin` identity. Existing audit entries keep their original identifiers. See [Cloudflare configuration](cloudflare.md) for setup and security limits.

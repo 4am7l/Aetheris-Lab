@@ -1,3 +1,5 @@
+import Checkbox from "@mui/material/Checkbox";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
 import { useState, useEffect, useRef } from "react";
@@ -21,6 +23,7 @@ export default function Analysis() {
   const [b, setB] = useState<Solution | null>(null);
   const [imageA, setImageA] = useState<ImageAttachment | null>(null);
   const [imageB, setImageB] = useState<ImageAttachment | null>(null);
+  const [attachPhotos, setAttachPhotos] = useState(false);
   const [conditions, setConditions] = useState("");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<RequestError>();
@@ -70,7 +73,10 @@ export default function Analysis() {
     setFailure(undefined);
     setDraftError(false);
     try {
-      const id = await submitRequest({ a, b, conditions });
+      const id = await submitRequest(
+        { a, b, conditions },
+        attachPhotos ? { imageA: imageA?.file, imageB: imageB?.file } : undefined,
+      );
       if (active.current)
         navigate("/requests/" + id + "/receipt", { replace: true });
     } catch (error) {
@@ -131,7 +137,14 @@ export default function Analysis() {
         <div>
           <h3>{t("submitRequest")}</h3>
           <p>{t("submissionNotice")}</p>
+          {attachPhotos && (imageA || imageB) && <p>{t("photosPrivate")}</p>}
         </div>
+        {(imageA || imageB) && (
+          <FormControlLabel
+            label={t("attachReviewPhotos")}
+            control={<Checkbox checked={attachPhotos} disabled={pending} onChange={(_, value) => setAttachPhotos(value)} />}
+          />
+        )}
         <Button
           variant="contained"
           disabled={!a || !b || pending || cooldown}

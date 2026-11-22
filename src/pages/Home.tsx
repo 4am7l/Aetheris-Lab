@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Button from "@mui/material/Button";
 import Paper from "@mui/material/Paper";
 import { listLocalRequests } from "../services/local";
+import { getServiceStatus } from "../services/publicRequests";
 import { useReceipts } from "../services/useReceipts";
 import { Icon, Notice } from "../ui";
 import { useText } from "../text";
@@ -16,6 +17,13 @@ export default function Home() {
     queryKey: ["requests"],
     queryFn: listLocalRequests,
   });
+  const services = useQuery({
+    queryKey: ["services"],
+    queryFn: ({ signal }) => getServiceStatus(signal),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const agent = services.data?.agent;
   const { receipts } = useReceipts();
   return (
     <div className="page home-page">
@@ -125,11 +133,10 @@ export default function Home() {
           </span>
           <span>
             {t("ai")}
-            <strong>{t("offline")}</strong>
-          </span>
-          <span>
-            {t("admin")}
-            <strong>{t("pending")}</strong>
+            <strong>{t(services.isPending ? "loading" : services.isError ? "statusUnavailable"
+                : agent === "configured" ? "agentConfigured"
+                : agent === "unconfigured" ? "agentUnconfiguredStatus"
+                : agent === "disabled" ? "agentDisabled" : "offline")}</strong>
           </span>
         </div>
       </section>
