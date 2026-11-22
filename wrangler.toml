@@ -2,6 +2,10 @@ name = "aetheris-lab-api"
 main = "worker/index.ts"
 compatibility_date = "2026-11-20"
 workers_dev = true
+keep_vars = true
+
+[vars]
+ADMIN_ORIGIN = "https://aetheris-admin.pages.dev"
 
 [triggers]
 crons = ["* * * * *"]
