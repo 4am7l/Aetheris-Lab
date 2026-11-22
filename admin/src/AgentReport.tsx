@@ -1,9 +1,9 @@
-import type { AdminRequestDetail, Evidence, GapCode } from "../review";
-import type { TextKey } from "../i18n";
-import { useText } from "../text";
-import { Notice } from "../ui";
+import type { AdminRequestDetail, Evidence, GapCode } from "../../src/review";
+import type { AdminTextKey } from "./i18n";
+import { useAdminText as useText } from "./text";
+import { Notice } from "../../src/ui";
 
-const gapLabels: Record<GapCode, TextKey> = {
+const gapLabels: Record<GapCode, AdminTextKey> = {
   identity: "identityMissing",
   identifierUnverified: "extraIdentifiers",
   concentration: "concentration",

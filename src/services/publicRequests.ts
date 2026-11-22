@@ -133,7 +133,6 @@ export async function trackRequest(id: string, signal?: AbortSignal) {
 
 const healthSchema = z.object({
   agent: z.enum(["disabled", "configured", "unconfigured"]).optional(),
-  review: z.boolean(),
 });
 
 export async function getServiceStatus(signal: AbortSignal) {

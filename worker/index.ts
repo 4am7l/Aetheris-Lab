@@ -6,7 +6,7 @@ import {
 import { admin } from "./admin";
 import { processNextRequest } from "./orchestrator";
 import { providerFor, type AIConfig } from "./ai";
-import { accessConfig, type AccessConfig } from "./auth";
+import { adminConfig, authenticateReviewer, fromAdminProxy, logout, reviewerLogin, type ReviewerAuthEnv } from "./auth";
 import { error, hex, json } from "./http";
 import { readSubmission, storeImages } from "./images";
 
@@ -14,12 +14,13 @@ interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
-export interface Env extends AccessConfig, AIConfig {
+export interface Env extends ReviewerAuthEnv, AIConfig {
   DB: D1Database;
   SUBMISSION_LIMIT: RateLimiter;
   TRACKING_LIMIT: RateLimiter;
   IMAGES: R2Bucket;
   AGENT_ENABLED?: string;
+  PUBLIC_ORIGINS?: string;
 }
 
 const unavailable = { error: "INTEGRATION_UNAVAILABLE" };
@@ -45,15 +46,15 @@ async function health(env: Env) {
     submission: ready,
     tracking: ready,
     identification: enabled,
-    review: ready && Boolean(accessConfig(env)),
+    review: ready && Boolean(adminConfig(env)),
     agent: !enabled ? "disabled" : providerFor(env) ? "configured" : "unconfigured",
   }, ready ? 200 : 503);
 }
 
-async function withinLimit(request: Request, limiter: RateLimiter) {
+async function withinLimit(request: Request, limiter: RateLimiter, prefix = "") {
   // Cloudflare provides this header on direct ingress. Treat missing IPs as a shared bucket.
   const key = request.headers.get("CF-Connecting-IP") || "unknown-client";
-  const { success } = await limiter.limit({ key });
+  const { success } = await limiter.limit({ key: prefix + key });
   return success;
 }
 
@@ -133,36 +134,93 @@ async function track(request: Request, env: Env, id: string) {
   return json(publicReceiptSchema.parse(response));
 }
 
+async function reviewApi(request: Request, env: Env, pathname: string) {
+  const config = adminConfig(env);
+  if (!config) return error("REVIEW_AUTH_NOT_CONFIGURED", 503);
+  if (!fromAdminProxy(request, config)) return error("FORBIDDEN", 403);
+  if (!env.DB || !env.SUBMISSION_LIMIT) return error("SERVICE_UNAVAILABLE", 503);
+  const auth = await reviewerLogin(request, env.DB, config, () => withinLimit(request, env.SUBMISSION_LIMIT, "admin-login:"));
+  if (auth) return auth;
+  const reviewer = await authenticateReviewer(request, env.DB, config);
+  if (reviewer instanceof Response) return reviewer;
+  if (pathname === "/api/admin/session" && request.method === "GET") return json({ login: reviewer.login });
+  if (pathname === "/api/admin/auth/logout" && request.method === "POST") return logout(env.DB, reviewer.tokenHash);
+  return admin(request, env, "github:" + reviewer.githubId);
+}
+
+function allowedPublicOrigin(origin: string, env: Env) {
+  if (!env.PUBLIC_ORIGINS?.split(",").map((value) => value.trim()).includes(origin)) return false;
+  try {
+    const url = new URL(origin);
+    return url.protocol === "https:" && url.origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+async function publicApi(request: Request, env: Env, trackingId: string | undefined, isHealth: boolean) {
+  const source = request.headers.get("Origin");
+  const crossOrigin = source !== null && source !== new URL(request.url).origin ? source : null;
+  if (crossOrigin !== null && !allowedPublicOrigin(crossOrigin, env)) return error("FORBIDDEN", 403);
+
+  const isSubmission = !isHealth && trackingId === undefined;
+  const method = isSubmission ? "POST" : "GET";
+  const allowedHeader = isHealth ? "" : isSubmission ? "content-type" : "authorization";
+  const cors = crossOrigin ? {
+    "Access-Control-Allow-Origin": crossOrigin,
+    "Access-Control-Expose-Headers": "Location, Retry-After",
+    "Vary": "Origin",
+  } : undefined;
+
+  if (cors && request.method === "OPTIONS") {
+    const headers = (request.headers.get("Access-Control-Request-Headers") ?? "").toLowerCase()
+      .split(",").map((header) => header.trim()).filter(Boolean);
+    if (request.headers.get("Access-Control-Request-Method") !== method ||
+      headers.some((header) => header !== allowedHeader)) return error("FORBIDDEN", 403);
+    const responseHeaders = new Headers({
+      ...cors,
+      "Access-Control-Allow-Methods": method,
+      "Cache-Control": "no-store",
+      "Vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+    });
+    if (allowedHeader) responseHeaders.set("Access-Control-Allow-Headers", allowedHeader);
+    return new Response(null, { status: 204, headers: responseHeaders });
+  }
+
+  let response: Response;
+  if (request.method !== method) response = error("METHOD_NOT_ALLOWED", 405, { Allow: method });
+  else if (isHealth) response = await health(env);
+  else {
+    const limiter = isSubmission ? env.SUBMISSION_LIMIT : env.TRACKING_LIMIT;
+    try {
+      if (!env.DB || !limiter) response = error("SERVICE_UNAVAILABLE", 503);
+      else if (!await withinLimit(request, limiter)) {
+        response = error("RATE_LIMITED", 429, { "Retry-After": "60" });
+      } else {
+        response = trackingId === undefined ? await submit(request, env) : await track(request, env, trackingId);
+      }
+    } catch {
+      response = error("SERVICE_UNAVAILABLE", 503);
+    }
+  }
+  if (cors) for (const [name, value] of Object.entries(cors)) response.headers.set(name, value);
+  return response;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
-    if (pathname === "/api/health" && request.method === "GET") return health(env);
     if (pathname === "/api/admin" || pathname.startsWith("/api/admin/")) {
       try {
-        return await admin(request, env);
+        return await reviewApi(request, env, pathname);
       } catch {
         return error("SERVICE_UNAVAILABLE", 503);
       }
     }
-    const isSubmission = pathname === publicRequestPath;
     const trackingId = /^\/api\/requests\/([^/]+)$/.exec(pathname)?.[1];
-    if (isSubmission || trackingId !== undefined) {
-      const method = isSubmission ? "POST" : "GET";
-      if (request.method !== method) return error("METHOD_NOT_ALLOWED", 405, { Allow: method });
-      const origin = request.headers.get("Origin");
-      if (isSubmission && origin !== null && origin !== new URL(request.url).origin) {
-        return error("FORBIDDEN", 403);
-      }
-      const limiter = isSubmission ? env.SUBMISSION_LIMIT : env.TRACKING_LIMIT;
-      if (!env.DB || !limiter) return error("SERVICE_UNAVAILABLE", 503);
-      try {
-        if (!(await withinLimit(request, limiter))) {
-          return error("RATE_LIMITED", 429, { "Retry-After": "60" });
-        }
-        return trackingId === undefined ? await submit(request, env) : await track(request, env, trackingId);
-      } catch {
-        return error("SERVICE_UNAVAILABLE", 503);
-      }
+    const isHealth = pathname === "/api/health";
+    if (isHealth || pathname === publicRequestPath || trackingId !== undefined) {
+      return publicApi(request, env, trackingId, isHealth);
     }
     if (pathname.startsWith("/api/")) return json(unavailable, 503);
     return error("NOT_FOUND", 404);

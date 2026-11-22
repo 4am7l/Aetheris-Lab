@@ -4,15 +4,15 @@ import TextField from "@mui/material/TextField";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AgentReport } from "../components/AgentReport";
-import { ApprovedResultPanel } from "../components/ApprovedResultPanel";
-import PageHeading from "../components/PageHeading";
-import { ReviewForm } from "../components/ReviewForm";
-import { publicRequestStatuses, type PublicRequestStatus, type Solution } from "../domain";
-import { statusLabel } from "../reviewText";
-import { adminAction, adminDetail, AdminError, adminImage, adminList } from "../services/admin";
-import { useText } from "../text";
-import { Icon, Notice } from "../ui";
+import { AgentReport } from "./AgentReport";
+import { ApprovedResultPanel } from "../../src/components/ApprovedResultPanel";
+import PageHeading from "../../src/components/PageHeading";
+import { ReviewForm } from "./ReviewForm";
+import { publicRequestStatuses, type PublicRequestStatus, type Solution } from "../../src/domain";
+import { statusLabel } from "../../src/reviewText";
+import { adminAction, adminDetail, AdminError, adminImage, adminList } from "./api";
+import { useAdminText as useText } from "./text";
+import { Icon, Notice } from "../../src/ui";
 
 function DateLabel({ value }: { value: string }) {
   return <time dateTime={value}>{new Date(value).toLocaleString(document.documentElement.lang || undefined)}</time>;
@@ -63,7 +63,7 @@ function ReviewQueue() {
         requests.length ? (
           <div className="request-list">
             {requests.map((request) => (
-              <Link key={request.id} to={"/admin/requests/" + request.id} className="request-row">
+              <Link key={request.id} to={"/requests/" + request.id} className="request-row">
                 <span className="request-icon"><Icon name="assignment" /></span>
                 <div>
                   <strong><bdi>{request.nameA}</bdi> · <bdi>{request.nameB}</bdi></strong>
@@ -134,7 +134,7 @@ function RequestReview({ id }: { id: string }) {
 
   return (
     <div className="page">
-      <Link to="/admin" className="text-link">{t("back")} · {t("adminQueue")}</Link>
+      <Link to="/" className="text-link">{t("back")} · {t("adminQueue")}</Link>
       <PageHeading title={t("adminRequest")} />
       {detail.isPending && <p role="status">{t("loading")}</p>}
       {detail.isError && <ReadError error={detail.error} retry={() => void detail.refetch()} />}
@@ -210,7 +210,7 @@ function RequestReview({ id }: { id: string }) {
   );
 }
 
-export default function Admin() {
+export default function ReviewWorkspace() {
   const { id } = useParams();
   return id ? <RequestReview key={id} id={id} /> : <ReviewQueue />;
 }

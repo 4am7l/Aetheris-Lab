@@ -1,7 +1,12 @@
-import type { PublicRequestStatus } from "../domain";
-import type { AdminRequestDetail, AdminRequestList } from "../review";
+import type { PublicRequestStatus } from "../../src/domain";
+import type { AdminRequestDetail, AdminRequestList } from "../../src/review";
 
 const root = "/api/admin/requests";
+export const sessionQueryKey = ["reviewer-session"] as const;
+
+interface ReviewerSession {
+  login: string;
+}
 
 export class AdminError extends Error {
   constructor(public readonly status: number) {
@@ -23,6 +28,23 @@ async function adminRequest<T>(path: string, signal?: AbortSignal, body?: unknow
   });
   if (!response.ok) throw new AdminError(response.status);
   return response.json() as Promise<T>;
+}
+
+export async function adminSession(signal: AbortSignal): Promise<ReviewerSession | null> {
+  try {
+    return await adminRequest<ReviewerSession>("/api/admin/session", signal);
+  } catch (error) {
+    if (error instanceof AdminError && [401, 403].includes(error.status)) return null;
+    throw error;
+  }
+}
+
+export async function adminSignOut() {
+  try {
+    await adminRequest("/api/admin/auth/logout", undefined, {});
+  } catch (error) {
+    if (!(error instanceof AdminError) || error.status !== 401) throw error;
+  }
 }
 
 export function adminList(status: PublicRequestStatus | "", after: string | null, signal: AbortSignal) {

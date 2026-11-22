@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { onRequest } from "../functions/api/[[route]]";
-import { onRequest as adminPage } from "../functions/admin/[[route]]";
+import { onRequest as adminApi } from "../admin/functions/api/admin/[[route]]";
 
 function call(request: Request, fetch?: typeof globalThis.fetch) {
   return onRequest({ request, env: { AETHERIS_API: fetch && { fetch } } });
 }
 
-describe("same-origin Pages API", () => {
+describe("public Pages API", () => {
   it("forwards the incoming request and returns the Worker's metadata and headers", async () => {
     const request = new Request(
       "https://aetheris-lab.pages.dev/api/requests/test",
@@ -28,11 +28,12 @@ describe("same-origin Pages API", () => {
 
   it("excludes unknown endpoints and rejects cross-origin preflights", async () => {
     const fetch = vi.fn();
-    const internal = await call(
-      new Request("https://aetheris-lab.pages.dev/api/admin/reviews"),
-      fetch,
-    );
-    expect(internal.status).toBe(404);
+    for (const path of ["/api/admin", "/api/admin/session", "/api/admin/auth/login", "/api/unknown"]) {
+      const internal = await call(new Request("https://aetheris-lab.pages.dev" + path, {
+        headers: { Cookie: "__Host-aetheris-session=test", "X-Aetheris-Admin-Proxy": "caller-supplied" },
+      }), fetch);
+      expect(internal.status).toBe(404);
+    }
     const preflight = await call(
       new Request("https://aetheris-lab.pages.dev/api/requests", {
         method: "OPTIONS",
@@ -49,18 +50,6 @@ describe("same-origin Pages API", () => {
   });
 
 
-  it("passes the signed assertion through the Pages binding and blocks other origins", async () => {
-    const endpoint = "https://review.example.test/api/admin/requests";
-    const fetch = vi.fn().mockResolvedValue(Response.json({ requests: [] }));
-    const active = new Request(endpoint, { headers: { "Cf-Access-Jwt-Assertion": "test-assertion" } });
-    expect((await call(active, fetch)).status).toBe(200);
-    expect(fetch).toHaveBeenCalledWith(active);
-
-    const foreign = new Request(endpoint, { headers: { Origin: "https://elsewhere.example" } });
-    expect((await call(foreign, fetch)).status).toBe(403);
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
-
   it("returns a non-cacheable 503 when the Worker binding is missing or fails", async () => {
     const request = new Request("https://aetheris-lab.pages.dev/api/health");
     for (const fetch of [
@@ -75,34 +64,77 @@ describe("same-origin Pages API", () => {
   });
 });
 
-describe("protected admin document", () => {
-  function page(headers: HeadersInit, status: number) {
-    const fetch = vi.fn().mockResolvedValue(new Response(null, { status }));
-    const next = vi.fn().mockResolvedValue(new Response("protected HTML"));
-    const response = adminPage({
-      request: new Request("https://review.example.test/admin", { headers }),
-      env: { AETHERIS_API: { fetch } },
-      next,
-    } as unknown as Parameters<typeof adminPage>[0]);
-    return { response, fetch, next };
+describe("admin Pages API", () => {
+  const adminOrigin = "https://aetheris-admin.pages.dev";
+  const proxySecret = "a".repeat(64);
+  const settings = { ADMIN_ORIGIN: adminOrigin, ADMIN_PROXY_SECRET: proxySecret };
+
+  function callAdmin(request: Request, fetch?: typeof globalThis.fetch, env = settings) {
+    return adminApi({ request, env: { ...env, AETHERIS_API: fetch && { fetch } } });
   }
 
-  it("returns protected HTML only after the Worker authenticates the session", async () => {
-    const missing = page({}, 200);
-    expect((await missing.response).status).toBe(401);
-    expect(missing.fetch).not.toHaveBeenCalled();
-    expect(missing.next).not.toHaveBeenCalled();
+  it("overwrites the proxy credential and returns the Worker's redirect and cookies unchanged", async () => {
+    const request = new Request(adminOrigin + "/api/admin/auth/login", {
+      headers: {
+        Cookie: "__Host-aetheris-oauth=test",
+        "X-Aetheris-Admin-Proxy": "caller-supplied",
+      },
+    });
+    const redirect = new Response(null, {
+      status: 303,
+      headers: { Location: "https://github.com/login/oauth/authorize", "Cache-Control": "no-store" },
+    });
+    redirect.headers.append("Set-Cookie", "__Host-aetheris-oauth=test; Secure; HttpOnly");
+    redirect.headers.append("Set-Cookie", "__Host-aetheris-session=test; Secure; HttpOnly");
+    const fetch = vi.fn().mockResolvedValue(redirect);
 
-    const denied = page({ "Cf-Access-Jwt-Assertion": "fake" }, 403);
-    expect((await denied.response).status).toBe(403);
-    expect(denied.next).not.toHaveBeenCalled();
+    const response = await callAdmin(request, fetch);
+    expect(response).toBe(redirect);
+    expect(response.headers.getSetCookie()).toHaveLength(2);
+    expect(response.headers.has("X-Aetheris-Admin-Proxy")).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const forwarded = fetch.mock.calls[0][0] as Request;
+    expect(forwarded.url).toBe(request.url);
+    expect(forwarded.redirect).toBe("manual");
+    expect(forwarded.headers.get("Cookie")).toBe("__Host-aetheris-oauth=test");
+    expect(forwarded.headers.get("X-Aetheris-Admin-Proxy")).toBe(proxySecret);
+  });
 
-    const allowed = page({ "Cf-Access-Jwt-Assertion": "signed-value" }, 200);
-    const response = await allowed.response;
-    expect(await response.text()).toBe("protected HTML");
-    expect(response.headers.get("Cache-Control")).toContain("no-store");
-    const checked = allowed.fetch.mock.calls[0][0] as Request;
-    expect(checked.url).toBe("https://review.example.test/api/admin/session");
-    expect(checked.headers.get("Cf-Access-Jwt-Assertion")).toBe("signed-value");
+  it("blocks public endpoints, preview hosts, foreign origins and unsafe methods without an origin", async () => {
+    const fetch = vi.fn();
+    const endpoint = "/api/admin/session";
+    const preview = "https://preview.aetheris-admin.pages.dev";
+    expect((await callAdmin(new Request(adminOrigin + "/api/requests"), fetch)).status).toBe(404);
+    for (const request of [
+      new Request(preview + endpoint),
+      new Request(adminOrigin + endpoint, { headers: { Origin: preview } }),
+      new Request(adminOrigin + endpoint, { method: "OPTIONS", headers: { Origin: preview } }),
+      new Request(adminOrigin + "/api/admin/auth/logout", { method: "POST" }),
+    ]) {
+      const response = await callAdmin(request, fetch);
+      expect(response.status).toBe(403);
+      expect(response.headers.has("Access-Control-Allow-Origin")).toBe(false);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards a same-origin mutation and fails closed if the proxy configuration or binding is missing", async () => {
+    const endpoint = adminOrigin + "/api/admin/requests/fixture/retry";
+    const request = new Request(endpoint, {
+      method: "POST",
+      headers: { Origin: adminOrigin, "Content-Type": "application/json" },
+      body: JSON.stringify({ runId: "fixture" }),
+    });
+    const fetch = vi.fn().mockResolvedValue(Response.json({ retried: true }));
+    const invalidSettings = { ...settings, ADMIN_PROXY_SECRET: "" };
+    for (const unavailable of [await callAdmin(request), await callAdmin(request, fetch, invalidSettings)]) {
+      expect(unavailable.status).toBe(503);
+      expect(unavailable.headers.get("Cache-Control")).toBe("no-store");
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect((await callAdmin(request, fetch)).status).toBe(200);
+    const forwarded = fetch.mock.calls[0][0] as Request;
+    expect(forwarded.headers.get("Origin")).toBe(adminOrigin);
+    expect(await forwarded.json()).toEqual({ runId: "fixture" });
   });
 });

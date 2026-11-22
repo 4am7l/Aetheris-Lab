@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import worker, { type Env } from "../worker";
 import { blankSolution } from "./domain";
 
@@ -57,12 +56,12 @@ function testLimiter(max: number) {
   };
 }
 
-async function call(path: string, init?: RequestInit) {
+async function call(path: string, init?: RequestInit, origin = "https://example.test") {
   const headers = new Headers(init?.headers);
   if (!headers.has("CF-Connecting-IP")) {
     headers.set("CF-Connecting-IP", `2001:db8::${(clientNumber++).toString(16)}`);
   }
-  return worker.fetch(new Request(`https://example.test${path}`, { ...init, headers }), env);
+  return worker.fetch(new Request(origin + path, { ...init, headers }), env);
 }
 
 function post(data: unknown, headers: HeadersInit = jsonHeaders) {
@@ -153,6 +152,54 @@ describe("public request API", () => {
     expect((await call(collection)).status).toBe(405);
   });
 
+  it("only allows explicitly configured public origins and endpoint-specific CORS headers", async () => {
+    const allowed = "https://aetheris-lab.pages.dev";
+    const blocked = "https://preview.aetheris-lab.pages.dev";
+    env.PUBLIC_ORIGINS = allowed;
+    try {
+      const preflight = (pathname: string, origin: string, method: string, headers: string) =>
+        call(pathname, {
+          method: "OPTIONS",
+          headers: {
+            Origin: origin,
+            "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": headers,
+          },
+        });
+      const intake = await preflight(collection, allowed, "POST", "Content-Type");
+      expect(intake.status).toBe(204);
+      expect(intake.headers.get("Access-Control-Allow-Origin")).toBe(allowed);
+      expect(intake.headers.get("Access-Control-Allow-Methods")).toBe("POST");
+      expect(intake.headers.get("Access-Control-Allow-Headers")).toBe("content-type");
+      expect(intake.headers.has("Access-Control-Allow-Credentials")).toBe(false);
+
+      const submitted = await post(input, { ...jsonHeaders, Origin: allowed });
+      expect(submitted.status).toBe(201);
+      expect(submitted.headers.get("Access-Control-Allow-Origin")).toBe(allowed);
+      const { id, trackingToken } = await submitted.json();
+      const path = collection + "/" + id;
+      const tracking = await preflight(path, allowed, "GET", "Authorization");
+      expect(tracking.status).toBe(204);
+      expect(tracking.headers.get("Access-Control-Allow-Headers")).toBe("authorization");
+      const receipt = await call(path, { headers: { Origin: allowed, Authorization: "Bearer " + trackingToken } });
+      expect(receipt.status).toBe(200);
+      expect(receipt.headers.get("Vary")).toContain("Origin");
+
+      for (const rejected of [
+        await preflight(collection, blocked, "POST", "Content-Type"),
+        await preflight(collection, allowed, "POST", "Content-Type, X-Aetheris-Admin-Proxy"),
+        await preflight(path, allowed, "POST", "Authorization"),
+        await post(input, { ...jsonHeaders, Origin: blocked }),
+        await call(path, { headers: { Origin: blocked, Authorization: "Bearer " + trackingToken } }),
+      ]) {
+        expect(rejected.status).toBe(403);
+        expect(rejected.headers.has("Access-Control-Allow-Origin")).toBe(false);
+      }
+    } finally {
+      delete env.PUBLIC_ORIGINS;
+    }
+  });
+
   it("keeps requests without a token record inaccessible", async () => {
     const id = randomUUID();
     const timestamp = new Date().toISOString();
@@ -231,9 +278,13 @@ describe("public request API", () => {
 });
 
 
-const accessIssuer = "https://aetheris-test.cloudflareaccess.com";
-const accessAudience = "test-audience";
-const reviewer = "reviewer@example.test";
+const adminOrigin = "https://aetheris-admin.pages.dev";
+const adminPrefix = "/api/admin/";
+const proxySecret = "1".repeat(64);
+const sessionCookie = "__Host-aetheris-session";
+const oauthCookie = "__Host-aetheris-oauth";
+const reviewer = { id: 451, login: "test-reviewer" };
+const reviewerActor = "github:" + reviewer.id;
 const approvalNotes = "Private laboratory review notes";
 const documented = {
   a: { ...blankSolution, name: "Glycerol", formula: "C3H8O3", notes: "Private sample note" },
@@ -248,36 +299,90 @@ function track(receipt: { id: string; trackingToken: string }, token = receipt.t
 const scheduled = () => worker.scheduled({} as Parameters<typeof worker.scheduled>[0], env);
 
 describe("assessment and reviewer workflow", () => {
-  let signingKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
-  let jwk: Awaited<ReturnType<typeof exportJWK>>;
-  let token: string;
+  let session: string;
+  let githubUser: { id: number; login: string };
   let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
   let onLookup: (() => Promise<void>) | undefined;
   let badOutput = false;
   const objects = new Map<string, Blob>();
 
-  async function assertion(email = reviewer, audience = accessAudience, expired = false) {
-    return new SignJWT({ email, type: "app" }).setProtectedHeader({ alg: "RS256", kid: "test" })
-      .setIssuer(accessIssuer).setAudience(audience).setSubject("reviewer-identity")
-      .setIssuedAt().setExpirationTime(expired ? 1 : "5m").sign(signingKey);
+  function reviewerRequest(path: string, init: RequestInit = {}) {
+    const headers = new Headers(init.headers);
+    headers.set("X-Aetheris-Admin-Proxy", proxySecret);
+    return call(adminPrefix + path, { ...init, headers }, adminOrigin);
   }
 
-  function adminCall(path: string, body?: unknown, accessToken = token, origin = "https://example.test") {
-    return call("/api/admin/" + path, {
+  function adminCall(path: string, body?: unknown, cookie = session, origin = adminOrigin) {
+    return reviewerRequest(path, {
       method: body === undefined ? "GET" : "POST",
       headers: {
-        "Cf-Access-Jwt-Assertion": accessToken,
+        Cookie: cookie,
         ...(body === undefined ? {} : { ...jsonHeaders, Origin: origin }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   }
 
-  beforeAll(async () => {
-    const keys = await generateKeyPair("RS256");
-    signingKey = keys.privateKey;
-    jwk = { ...await exportJWK(keys.publicKey), kid: "test", alg: "RS256" };
-  });
+  function browserCookie(response: Response, name: string) {
+    return response.headers.getSetCookie().find((value) => value.startsWith(name + "="));
+  }
+
+  async function beginLogin() {
+    const response = await reviewerRequest("auth/login");
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+    const authorize = new URL(response.headers.get("Location") ?? "");
+    expect(authorize.origin + authorize.pathname).toBe("https://github.com/login/oauth/authorize");
+    expect(authorize.searchParams.get("client_id")).toBe(env.GITHUB_OAUTH_CLIENT_ID);
+    expect(authorize.searchParams.get("redirect_uri")).toBe(adminOrigin + adminPrefix + "auth/callback");
+    expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(authorize.searchParams.get("scope")).toBeNull();
+    const state = authorize.searchParams.get("state") ?? "";
+    const challenge = authorize.searchParams.get("code_challenge") ?? "";
+    expect(state).toMatch(/^[a-f0-9]{64}$/);
+    expect(challenge).toMatch(/^[a-zA-Z0-9_-]{43}$/);
+    const cookie = browserCookie(response, oauthCookie) ?? "";
+    expect(cookie).toMatch(/; Secure; HttpOnly; SameSite=Lax$/);
+    expect(cookie).toContain("; Path=/;");
+    expect(cookie).not.toContain("Domain=");
+    const browser = cookie.split(";", 1)[0];
+    expect(browser).not.toContain(state);
+    return { state, browser, challenge };
+  }
+
+  function finishLogin(state: string, browser: string) {
+    return reviewerRequest(`auth/callback?state=${state}&code=fixture_code`, {
+      headers: { Cookie: browser },
+    });
+  }
+
+  async function signIn() {
+    const { state, browser, challenge } = await beginLogin();
+    const response = await finishLogin(state, browser);
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe(adminOrigin + "/");
+    expect(browserCookie(response, oauthCookie)).toContain("Max-Age=0");
+    const cookie = browserCookie(response, sessionCookie) ?? "";
+    expect(cookie).toMatch(/; Secure; HttpOnly; SameSite=Strict$/);
+    expect(cookie).toContain("; Path=/;");
+    expect(cookie).not.toContain("Domain=");
+    expect(cookie).not.toContain("test_access_token");
+
+    const exchange = mockFetch.mock.calls.filter(([url]) => String(url).includes("/login/oauth/access_token")).at(-1);
+    const form = new URLSearchParams(String(exchange?.[1]?.body));
+    expect(createHash("sha256").update(form.get("code_verifier") ?? "").digest("base64url")).toBe(challenge);
+    const browserSession = cookie.split(";", 1)[0];
+    const raw = browserSession.split("=", 2)[1];
+    expect(raw).toMatch(/^[a-f0-9]{64}$/);
+    const stored = db.prepare("SELECT token_sha256, github_id, login FROM admin_sessions").get();
+    expect(stored).toEqual({
+      token_sha256: createHash("sha256").update(raw).digest("hex"),
+      github_id: String(reviewer.id),
+      login: reviewer.login,
+    });
+    return browserSession;
+  }
 
   beforeEach(async () => {
     db = new DatabaseSync(":memory:");
@@ -288,10 +393,11 @@ describe("assessment and reviewer workflow", () => {
       DB: testDatabase(db),
       SUBMISSION_LIMIT: testLimiter(5),
       TRACKING_LIMIT: testLimiter(30),
-      ADMIN_ORIGIN: "https://example.test",
-      CF_ACCESS_TEAM_DOMAIN: "aetheris-test.cloudflareaccess.com",
-      CF_ACCESS_AUD: accessAudience,
-      REVIEWER_EMAILS: reviewer,
+      ADMIN_ORIGIN: adminOrigin,
+      ADMIN_PROXY_SECRET: proxySecret,
+      GITHUB_OAUTH_CLIENT_ID: "test-client-id",
+      GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
+      REVIEWER_GITHUB_IDS: String(reviewer.id),
       AGENT_ENABLED: "true",
       IMAGES: {
         put: async (key: string, file: ArrayBuffer) => objects.set(key, new Blob([file])),
@@ -302,10 +408,25 @@ describe("assessment and reviewer workflow", () => {
     } as unknown as Env;
     await migrate("0002_public_request_tracking.sql");
     await migrate("0003_public_assessment_workflow.sql");
-    token = await assertion();
+    await migrate("0004_admin_auth.sql");
+    githubUser = reviewer;
     mockFetch = vi.fn<typeof fetch>(async (resource, options) => {
       const url = new URL(String(resource));
-      if (url.href === accessIssuer + "/cdn-cgi/access/certs") return Response.json({ keys: [jwk] });
+      if (url.href === "https://github.com/login/oauth/access_token") {
+        expect(options?.redirect).toBe("manual");
+        const form = new URLSearchParams(String(options?.body));
+        expect(options?.method).toBe("POST");
+        expect(form.get("client_secret")).toBe(env.GITHUB_OAUTH_CLIENT_SECRET);
+        expect(form.get("code")).toBe("fixture_code");
+        expect(form.get("redirect_uri")).toBe(adminOrigin + adminPrefix + "auth/callback");
+        expect(form.get("code_verifier")).toMatch(/^[a-f0-9]{64}$/);
+        return Response.json({ access_token: "test_access_token" });
+      }
+      if (url.href === "https://api.github.com/user") {
+        expect(options?.redirect).toBe("manual");
+        expect(new Headers(options?.headers).get("Authorization")).toBe("Bearer test_access_token");
+        return Response.json(githubUser);
+      }
       // workerd only supports "follow" or "manual"; the agent must refuse redirected evidence.
       expect(options?.redirect).toBe("manual");
       if (url.hostname === "pubchem.ncbi.nlm.nih.gov") {
@@ -353,6 +474,7 @@ describe("assessment and reviewer workflow", () => {
       throw new Error("Unexpected outbound request");
     });
     vi.stubGlobal("fetch", mockFetch);
+    session = await signIn();
   });
 
   afterEach(() => {
@@ -367,24 +489,105 @@ describe("assessment and reviewer workflow", () => {
     await migrate("0002_public_request_tracking.sql");
     const receipt = await (await post(input)).json();
     await migrate("0003_public_assessment_workflow.sql");
+    await migrate("0004_admin_auth.sql");
     expect(await (await track(receipt)).json()).toEqual({
       id: receipt.id, status: "Submitted", createdAt: receipt.createdAt, updatedAt: receipt.updatedAt,
     });
     expect(db.prepare("SELECT status FROM public_request_status_history").get()?.status).toBe("Submitted");
   });
 
-  it("rejects missing, unsigned, expired, wrong-audience, unlisted and cross-origin admin calls", async () => {
-    for (const path of ["session", "requests", "requests/" + randomUUID() + "/images/" + randomUUID()]) {
-      expect((await call("/api/admin/" + path)).status).toBe(401);
-      expect((await adminCall(path, undefined, "forged")).status).toBe(401);
+  it("checks the proxy, exact origin and reviewer session before admin resource access", async () => {
+    const request = "requests/" + randomUUID();
+    for (const path of ["session", "requests", request, request + "/images/" + randomUUID()]) {
+      const missing = await reviewerRequest(path);
+      expect(missing.status).toBe(401);
+      expect(missing.headers.get("Cache-Control")).toBe("no-store");
+      expect(missing.headers.has("Access-Control-Allow-Origin")).toBe(false);
+      expect((await adminCall(path, undefined, sessionCookie + "=" + "f".repeat(64))).status).toBe(401);
     }
-    expect((await adminCall("requests", undefined, await assertion(reviewer, "other"))).status).toBe(401);
-    expect((await adminCall("requests", undefined, await assertion(reviewer, accessAudience, true))).status).toBe(401);
-    expect((await adminCall("requests", undefined, await assertion("outsider@example.test"))).status).toBe(403);
-    expect((await adminCall("requests/" + randomUUID() + "/decision", {}, token, "https://elsewhere.test")).status).toBe(403);
-    expect((await adminCall("session")).status).toBe(200);
-    env.REVIEWER_EMAILS = undefined;
+    for (const path of [request + "/retry", request + "/decision", "auth/logout"]) {
+      expect((await adminCall(path, {}, "")).status).toBe(401);
+    }
+    expect((await reviewerRequest("requests", {
+      headers: { "Cf-Access-Jwt-Assertion": "legacy-assertion" },
+    })).status).toBe(401);
+    expect((await call(adminPrefix + "session", { headers: { Cookie: session } }, adminOrigin)).status).toBe(403);
+    expect((await call(adminPrefix + "session", {
+      headers: { Cookie: session, "X-Aetheris-Admin-Proxy": "f".repeat(64) },
+    }, adminOrigin)).status).toBe(403);
+    expect((await call(adminPrefix + "session", {
+      headers: { Cookie: session, "X-Aetheris-Admin-Proxy": proxySecret, Origin: adminOrigin },
+    }, "https://aetheris-lab-api.4am7l.workers.dev")).status).toBe(403);
+
+    const foreign = "https://preview.aetheris-admin.pages.dev";
+    for (const rejected of [
+      await reviewerRequest("requests", { headers: { Cookie: session, Origin: foreign } }),
+      await adminCall(request + "/decision", {}, session, foreign),
+      await reviewerRequest("auth/logout", { method: "POST", headers: { Cookie: session } }),
+      await reviewerRequest("requests", {
+        method: "OPTIONS",
+        headers: { Origin: foreign, "Access-Control-Request-Method": "GET" },
+      }),
+    ]) {
+      expect(rejected.status).toBe(403);
+      expect(rejected.headers.has("Access-Control-Allow-Origin")).toBe(false);
+    }
+    expect(await (await adminCall("session")).json()).toEqual({ login: reviewer.login });
+    env.REVIEWER_GITHUB_IDS = "628";
+    expect((await adminCall("requests")).status).toBe(403);
+    delete env.REVIEWER_GITHUB_IDS;
     expect((await adminCall("requests")).status).toBe(503);
+  });
+
+  it("binds OAuth state to the browser and permits a single successful callback", async () => {
+    const { state, browser } = await beginLogin();
+    mockFetch.mockClear();
+    const wrongBrowser = await finishLogin(state, oauthCookie + "=" + "f".repeat(64));
+    expect(wrongBrowser.headers.get("Location")).toBe(adminOrigin + "/?auth=failed");
+    expect(mockFetch).not.toHaveBeenCalled();
+    const responses = await Promise.all([finishLogin(state, browser), finishLogin(state, browser)]);
+    expect(responses.map((response) => response.headers.get("Location")).sort()).toEqual([
+      adminOrigin + "/", adminOrigin + "/?auth=failed",
+    ]);
+    expect(responses.filter((response) => browserCookie(response, sessionCookie))).toHaveLength(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects unlisted GitHub IDs, expired OAuth state and redirects from the identity provider", async () => {
+    githubUser = { ...reviewer, id: reviewer.id + 1 };
+    const unlisted = await beginLogin();
+    const unlistedResponse = await finishLogin(unlisted.state, unlisted.browser);
+    expect(unlistedResponse.headers.get("Location")).toBe(adminOrigin + "/?auth=failed");
+    expect(browserCookie(unlistedResponse, sessionCookie)).toBeUndefined();
+
+    const expired = await beginLogin();
+    db.prepare("UPDATE admin_oauth_states SET expires_at = 0").run();
+    mockFetch.mockClear();
+    expect((await finishLogin(expired.state, expired.browser)).headers.get("Location")).toBe(adminOrigin + "/?auth=failed");
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    const redirected = await beginLogin();
+    mockFetch.mockResolvedValueOnce(new Response(null, {
+      status: 302,
+      headers: { Location: "https://untrusted.example" },
+    }));
+    const redirectResponse = await finishLogin(redirected.state, redirected.browser);
+    expect(redirectResponse.headers.get("Location")).toBe(adminOrigin + "/?auth=failed");
+    expect(browserCookie(redirectResponse, sessionCookie)).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][1]?.redirect).toBe("manual");
+  });
+
+  it("expires sessions and deletes them on logout", async () => {
+    const logout = await adminCall("auth/logout", {});
+    expect(logout.status).toBe(200);
+    expect(browserCookie(logout, sessionCookie)).toContain("Max-Age=0");
+    expect((await adminCall("session")).status).toBe(401);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM admin_sessions").get()?.count).toBe(0);
+
+    session = await signIn();
+    db.prepare("UPDATE admin_sessions SET expires_at = 0").run();
+    expect((await adminCall("requests")).status).toBe(401);
   });
 
   it("runs the agent once, keeps evidence private, and publishes only the human decision to its token owner", async () => {
@@ -438,10 +641,13 @@ describe("assessment and reviewer workflow", () => {
     expect((await adminCall(path + "/decision", {
       ...review, result: { ...review.result, attestation: false },
     })).status).toBe(400);
-    expect((await call("/api/admin/" + path + "/decision", {
-      method: "POST", headers: { ...jsonHeaders, Authorization: "Bearer " + receipt.trackingToken },
+    expect((await reviewerRequest(path + "/decision", {
+      method: "POST", headers: { ...jsonHeaders, Origin: adminOrigin, Authorization: "Bearer " + receipt.trackingToken },
       body: JSON.stringify(review),
     })).status).toBe(401);
+    expect(await (await track(receipt)).json()).toEqual({
+      id: receipt.id, status: "Pending Review", createdAt: receipt.createdAt, updatedAt: expect.any(String),
+    });
 
     const replies = await Promise.all([
       adminCall(path + "/decision", review), adminCall(path + "/decision", review),
@@ -452,7 +658,7 @@ describe("assessment and reviewer workflow", () => {
       status: "Approved",
       result: { classification: "Insufficient information", conditions: review.result.conditions },
     });
-    for (const secret of [approvalNotes, reviewer, "hazardEvidenceIds", documented.a.notes, receipt.trackingToken]) {
+    for (const secret of [approvalNotes, reviewerActor, reviewer.login, "hazardEvidenceIds", documented.a.notes, receipt.trackingToken]) {
       expect(JSON.stringify(published)).not.toContain(secret);
     }
     const other = await (await post(input)).json();
@@ -462,6 +668,8 @@ describe("assessment and reviewer workflow", () => {
 
     const reviewed = await (await adminCall(path)).json();
     expect(reviewed.review.notes).toBe(approvalNotes);
+    expect(reviewed.review.reviewerId).toBe(reviewerActor);
+    expect(reviewed.history.at(-1).actor).toBe(reviewerActor);
     expect(reviewed.history.map(({ status }: { status: string }) => status)).toEqual([
       "Submitted", "Analyzing", "Pending Review", "Approved",
     ]);
@@ -533,7 +741,7 @@ describe("assessment and reviewer workflow", () => {
     expect(images).toEqual([{ id: expect.any(String), solution: "A" }]);
     const imageRoute = path + "/images/" + images[0].id;
     expect(objects.size).toBe(1);
-    expect((await call("/api/admin/" + imageRoute, { headers: { Authorization: "Bearer " + receipt.trackingToken } })).status).toBe(401);
+    expect((await reviewerRequest(imageRoute, { headers: { Authorization: "Bearer " + receipt.trackingToken } })).status).toBe(401);
     expect((await adminCall("requests/" + randomUUID() + "/images/" + images[0].id)).status).toBe(404);
     const image = await adminCall(imageRoute);
     expect(image.headers.get("Content-Type")).toBe("image/png");

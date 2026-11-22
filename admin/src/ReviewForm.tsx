@@ -4,11 +4,11 @@ import FormControlLabel from "@mui/material/FormControlLabel";
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import { useState, type FormEvent } from "react";
-import { finalResultSchema, type PublicResult } from "../domain";
-import { reviewInputSchema, type AdminRequestDetail, type ReviewDecision } from "../review";
-import { resultLabel } from "../reviewText";
-import { useText } from "../text";
-import { Notice } from "../ui";
+import { finalResultSchema, type PublicResult } from "../../src/domain";
+import { reviewInputSchema, type AdminRequestDetail, type ReviewDecision } from "../../src/review";
+import { resultLabel } from "../../src/reviewText";
+import { useAdminText as useText } from "./text";
+import { Notice } from "../../src/ui";
 
 type Draft = Record<"conditions" | "hazards" | "incompatibilities" | "storage" | "container" | "limitations", string>;
 const fieldLabels = {

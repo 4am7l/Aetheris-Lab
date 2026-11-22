@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["worker", "functions", "src/domain.ts", "src/services/contracts.ts"]
+  "include": ["worker", "functions", "admin/functions", "src/domain.ts", "src/services/contracts.ts"]
 }

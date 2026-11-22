@@ -8,8 +8,12 @@ AI_MODEL=
 AGENT_API_KEY=
 AGENT_SYSTEM_PROMPT=
 
-# Optional admin configuration. All four are required to enable reviewer access.
+# Optional browser access to the public Worker API from exact origins (comma separated).
+PUBLIC_ORIGINS=
+
+# Reviewer authentication. Set the origin and the same proxy secret in admin Pages Functions.
 ADMIN_ORIGIN=
-CF_ACCESS_TEAM_DOMAIN=
-CF_ACCESS_AUD=
-REVIEWER_EMAILS=
+ADMIN_PROXY_SECRET=
+GITHUB_OAUTH_CLIENT_ID=
+GITHUB_OAUTH_CLIENT_SECRET=
+REVIEWER_GITHUB_IDS=

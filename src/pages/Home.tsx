@@ -138,11 +138,6 @@ export default function Home() {
                 : agent === "unconfigured" ? "agentUnconfiguredStatus"
                 : agent === "disabled" ? "agentDisabled" : "offline")}</strong>
           </span>
-          <span>
-            {t("admin")}
-            <strong>{t(services.isPending ? "loading" : services.isError ? "statusUnavailable"
-                : services.data.review ? "adminReady" : "pending")}</strong>
-          </span>
         </div>
       </section>
     </div>

@@ -8,7 +8,6 @@ import {
   type Evidence, type PreliminaryReport, type ReviewDecision,
 } from "../src/review";
 import type { Env } from "./index";
-import { authenticateReviewer } from "./auth";
 import { providerFor } from "./ai";
 import { error, json, readJson } from "./http";
 
@@ -166,12 +165,8 @@ async function image(env: Env, requestId: string, imageId: string) {
   });
 }
 
-export async function admin(request: Request, env: Env) {
-  const reviewer = await authenticateReviewer(request, env);
-  if (reviewer instanceof Response) return reviewer;
+export async function admin(request: Request, env: Env, reviewer: string) {
   const url = new URL(request.url);
-  if (url.pathname === "/api/admin/session" && request.method === "GET") return json({ reviewer });
-  if (!env.DB) return error("SERVICE_UNAVAILABLE", 503);
   if (url.pathname === "/api/admin/requests" && request.method === "GET") return list(env, url);
   const route = /^\/api\/admin\/requests\/([^/]+)(?:\/(.+))?$/.exec(url.pathname);
   if (!route || !publicRequestIdSchema.safeParse(route[1]).success) return error("NOT_FOUND", 404);
