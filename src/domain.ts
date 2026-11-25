@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reviewedScienceSchema } from "./scientificReport";
 export const statuses = [
   "Draft",
   "Submitted",
@@ -102,7 +103,7 @@ const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 export const dilutionVolumeSchema = z.string().trim().max(64)
   .refine((value) => decimal.test(value) && Number.isFinite(Number(value)));
 export const calculationInputSchema = z.strictObject({
-  kind: z.literal("aqueous-dilution"),
+  kind: z.enum(["aqueous-dilution", "aqueous-sodium-chloride"]),
   assumptionsConfirmed: z.literal(true),
   finalVolume: z.strictObject({
     value: dilutionVolumeSchema,
@@ -194,6 +195,7 @@ export const finalResultSchema = z.object({
   storage: z.string(),
   container: z.string(),
   limitations: z.array(z.string()).min(1),
+  scientificReport: reviewedScienceSchema.optional(),
   sources: z
     .array(
       z.object({

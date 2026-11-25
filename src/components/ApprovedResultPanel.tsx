@@ -1,10 +1,12 @@
-import { useText } from "../text";
+import { useLanguage, useText } from "../text";
 import type { PublicResult } from "../domain";
 import { resultLabel } from "../reviewText";
+import { scientificLabels } from "../scientificLabels";
 import { Icon, Notice } from "../ui";
 
 export function ApprovedResultPanel({ result }: { result: PublicResult }) {
   const t = useText();
+  const language = useLanguage();
   return (
     <section className="approved-result panel">
       <span className="eyebrow">{t("expertResult")}</span>
@@ -30,6 +32,16 @@ export function ApprovedResultPanel({ result }: { result: PublicResult }) {
       </div>
       <h3>{t("limitations")}</h3>
       <ul>{result.limitations.map((item, index) => <li key={index} dir="auto">{item}</li>)}</ul>
+      {result.scientificReport && <section>
+        <h3>{t("reviewedScientificReport")}</h3>
+        {result.scientificReport.map(({ topic, en, ar, sources }) => <section key={topic}>
+          <h4>{scientificLabels[topic][language]}</h4>
+          <p dir={language === "ar" ? "rtl" : "ltr"} style={{ whiteSpace: "pre-line" }}>{language === "ar" ? ar : en}</p>
+          {sources.length > 0 && <ul>{sources.map(({ url, title }) =>
+            <li key={url}><a href={url} target="_blank" rel="noreferrer" className="text-link"><bdi>{title}</bdi></a></li>
+          )}</ul>}
+        </section>)}
+      </section>}
       <h3>{t("references")}</h3>
       <ul>
         {result.sources.map(({ url, title }) => (

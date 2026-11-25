@@ -26,7 +26,7 @@ export default function Analysis() {
   const [imageB, setImageB] = useState<ImageAttachment | null>(null);
   const [attachPhotos, setAttachPhotos] = useState(false);
   const [conditions, setConditions] = useState("");
-  const [dilution, setDilution] = useState(false);
+  const [calculationKind, setCalculationKind] = useState<NonNullable<RequestInput["calculation"]>["kind"]>();
   const [finalVolume, setFinalVolume] = useState("");
   const [finalVolumeUnit, setFinalVolumeUnit] = useState<"L" | "mL">("mL");
   const [pending, setPending] = useState(false);
@@ -57,11 +57,11 @@ export default function Analysis() {
     [imageB],
   );
 
-  const invalidVolume = dilution && Boolean(finalVolume.trim()) && !dilutionVolumeSchema.safeParse(finalVolume).success;
+  const invalidVolume = Boolean(calculationKind && finalVolume.trim()) && !dilutionVolumeSchema.safeParse(finalVolume).success;
   const input: RequestInput | undefined = a && b ? {
     a, b, conditions,
-    ...(dilution ? { calculation: {
-      kind: "aqueous-dilution", assumptionsConfirmed: true,
+    ...(calculationKind ? { calculation: {
+      kind: calculationKind, assumptionsConfirmed: true,
       ...(finalVolume.trim() ? { finalVolume: { value: finalVolume, unit: finalVolumeUnit } } : {}),
     } } : {}),
   } : undefined;
@@ -146,11 +146,19 @@ export default function Analysis() {
           <p className="small muted">{t("unknownFields")}</p>
           <FormControlLabel
             label={t("dilutionOptIn")}
-            control={<Checkbox checked={dilution} onChange={(_, checked) => setDilution(checked)}
+            control={<Checkbox checked={calculationKind === "aqueous-dilution"}
+              onChange={(_, checked) => setCalculationKind(checked ? "aqueous-dilution" : undefined)}
               slotProps={{ input: { "aria-describedby": "dilution-assumptions" } }} />}
           />
           <p id="dilution-assumptions" className="small muted">{t("dilutionAssumptions")}</p>
-          {dilution && <div className="form-grid">
+          <FormControlLabel
+            label={t("saltOptIn")}
+            control={<Checkbox checked={calculationKind === "aqueous-sodium-chloride"}
+              onChange={(_, checked) => setCalculationKind(checked ? "aqueous-sodium-chloride" : undefined)}
+              slotProps={{ input: { "aria-describedby": "salt-assumptions" } }} />}
+          />
+          <p id="salt-assumptions" className="small muted">{t("saltAssumptions")}</p>
+          {calculationKind && <div className="form-grid">
             <TextField
               label={t("dilutionFinalVolume")}
               value={finalVolume}

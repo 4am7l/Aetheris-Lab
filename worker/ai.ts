@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { assessmentSchema, type Evidence, type PreliminaryReport } from "../src/review";
-import { geminiProvider } from "./gemini";
+import { defaultGeminiModel, geminiProvider } from "./gemini";
 import { readBytes } from "./http";
 
 export interface AIConfig {
@@ -14,9 +14,10 @@ export function providerFor(config: AIConfig) {
   const model = config.AI_MODEL?.trim();
   const key = config.AGENT_API_KEY?.trim();
   const instructions = config.AGENT_SYSTEM_PROMPT?.trim();
+  const provider = config.AI_PROVIDER?.trim() || "gemini";
+  if (provider === "gemini") return key ? geminiProvider(model || defaultGeminiModel, key) : null;
   if (!model || !/^[\w.:-]{1,128}$/.test(model) || !key) return null;
-  if (config.AI_PROVIDER === "gemini") return geminiProvider(model, key);
-  if (config.AI_PROVIDER !== "openai" || !instructions) return null;
+  if (provider !== "openai" || !instructions) return null;
 
   return {
     name: "openai" as const,

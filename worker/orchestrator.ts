@@ -3,6 +3,8 @@ import { publicInputSchema } from "../src/domain";
 import type { AgentStatus, Evidence, PreliminaryReport } from "../src/review";
 import { providerFor, type AIConfig } from "./ai";
 import { calculate } from "./chemistry";
+import { GeminiFailure } from "./gemini";
+import { assembleScientificReport, scientificContext } from "./scientificReport";
 import { scientificSources } from "./sources";
 
 type AgentEnv = AIConfig & { DB: D1Database; AGENT_ENABLED?: string };
@@ -75,13 +77,19 @@ export async function processNextRequest(env: AgentEnv) {
       assessment: null,
       calculation,
     };
-    if (!input.conditions.trim()) report.gaps.push({ code: "conditions" });
-    if (provider?.name === "gemini") {
-      try {
-        report.calculationExplanation = await provider.explain(calculation);
-      } catch {
-        status = "failed";
-        failure = "AI_UNAVAILABLE_OR_INVALID";
+    if (!input.conditions.trim() && !input.calculation) report.gaps.push({ code: "conditions" });
+    if (provider?.name !== "openai") {
+      const context = scientificContext(input, report, evidence);
+      report.scientificReport = assembleScientificReport(
+        context, context.candidates.map(({ code }) => code), "evidence-review",
+      );
+      if (provider?.name === "gemini" && (context.data.evidence.length || calculation.status === "calculated")) {
+        try {
+          report.scientificReport = await provider.assess(context);
+        } catch (cause) {
+          status = "failed";
+          failure = cause instanceof GeminiFailure ? cause.code : "AI_UNAVAILABLE";
+        }
       }
     } else if (provider) {
       if (!evidence.length && report.gaps.some(({ code }) =>

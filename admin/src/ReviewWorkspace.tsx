@@ -216,6 +216,13 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
             <section>
               <h3>{t("conditions")}</h3>
               <p dir="auto">{request.input.conditions || "—"}</p>
+              {request.input.calculation && <p>
+                {t(request.input.calculation.kind === "aqueous-dilution" ? "dilutionOptIn" : "saltOptIn")}
+                {" · "}{t("dilutionFinalVolume")}{" "}
+                {request.input.calculation.finalVolume
+                  ? <bdi dir="ltr">{request.input.calculation.finalVolume.value} {request.input.calculation.finalVolume.unit}</bdi>
+                  : t("unknown")}
+              </p>}
             </section>
             <section>
               <h3>{t("privatePhotos")}</h3>

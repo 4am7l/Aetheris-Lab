@@ -2,7 +2,7 @@ import { unknown, type RequestInput } from "../../src/domain";
 import type { CalculationReference, CalculationReport } from "../../src/calculation";
 import { identityMatches, liters, methanol, normalizeSolution, water } from "./normalize";
 
-const model = { id: "aqueous-methanol-dilution", version: 1 };
+const model = { id: "aqueous-methanol-dilution", version: 1 } as const;
 const references = [
   {
     title: "OpenStax Chemistry 2e, 3.3 Molarity",

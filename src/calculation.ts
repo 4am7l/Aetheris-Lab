@@ -6,6 +6,7 @@ export const calculationReasons = [
   "stockConcentrationMissing", "stockConcentrationUnsupported", "stockVolumeMissing",
   "stockVolumeUnsupported", "finalVolumeMissing", "finalVolumeUnsupported",
   "diluentConcentration", "diluentQuantity", "additionalContext", "numericRange",
+  "saltConcentration", "saltVolume", "saltFinalVolume",
 ] as const;
 
 export const explanationSchema = z.strictObject({
@@ -27,7 +28,7 @@ type Blocked = {
 
 type Calculated = {
   status: "calculated";
-  model: { id: string; version: number };
+  model: { id: "aqueous-methanol-dilution"; version: number };
   inputs: {
     soluteCid: number;
     solventCid: number;
@@ -43,4 +44,21 @@ type Calculated = {
   references: readonly CalculationReference[];
 };
 
-export type CalculationReport = Blocked | Calculated;
+export type SodiumChlorideBalance = {
+  status: "calculated";
+  model: { id: "dilute-aqueous-nacl"; version: number };
+  stocks: { molPerL: number; volumeL: number }[];
+  finalVolumeL: number;
+  temperatureK: number;
+  amountMolPerIon: number;
+  molPerLPerIon: number;
+  references: readonly CalculationReference[];
+};
+
+export type CalculationReport = Blocked | Calculated | SodiumChlorideBalance;
+
+export function isSaltBalance(
+  calculation: Extract<CalculationReport, { status: "calculated" }>,
+): calculation is SodiumChlorideBalance {
+  return calculation.model.id === "dilute-aqueous-nacl";
+}

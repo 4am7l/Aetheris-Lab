@@ -1,4 +1,7 @@
 export const en = {
+  reviewedScientificReport: "Reviewed scientific report",
+  saltOptIn: "Evaluate two dilute aqueous sodium chloride stocks",
+  saltAssumptions: "I confirm that both stocks contain only water and sodium chloride, are liquid at 25 °C, and were assessed at ambient pressure with no material lost. Zero concentration denotes pure water. Record the measured final volume and disclose other conditions in the notes.",
   dilutionOptIn: "Evaluate a documented aqueous methanol dilution",
   dilutionAssumptions: "I confirm A is a liquid stock of methanol in water, B is pure liquid water, and the stock, water, and measured final solution are at 25 °C. The stock solute is retained in a homogeneous liquid. Enter A’s molarity and volume and leave B’s concentration unknown. Include other conditions or formulation details in the notes.",
   dilutionFinalVolume: "Measured final solution volume",
@@ -227,6 +230,9 @@ export const en = {
 export type TextKey = keyof typeof en;
 // Partial dictionary fallback keeps new keys safe; expand and professionally review before public Arabic release.
 export const ar: Partial<Record<TextKey, string>> = {
+  reviewedScientificReport: "التقرير العلمي المُراجَع",
+  saltOptIn: "تقييم محلولين مائيين مخفّفين من كلوريد الصوديوم",
+  saltAssumptions: "أؤكد أن المحلولين يحتويان على الماء وكلوريد الصوديوم فقط، وأنهما سائلان عند 25 °م، وأن التقييم جرى عند الضغط المحيط دون فقدان المادة. يشير التركيز الصفري إلى الماء النقي. سجّل الحجم النهائي المقاس واذكر أي ظروف أخرى في الملاحظات.",
   dilutionOptIn: "تقييم تخفيف موثّق لمحلول الميثانول المائي",
   dilutionAssumptions: "أؤكد أن أ محلول سائل من الميثانول في الماء، وأن ب ماء سائل نقي، وأن المحلول الأصلي والماء والمحلول النهائي المقاس جميعها عند 25 °م. تبقى المادة المذابة في سائل متجانس. أدخل التركيز المولي وحجم أ، واترك تركيز ب غير معروف. أضف أي ظروف أو تفاصيل أخرى عن التركيبة في الملاحظات.",
   dilutionFinalVolume: "الحجم المقاس للمحلول النهائي",

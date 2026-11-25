@@ -10,7 +10,7 @@ import {
 import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { en, ar, type TextKey } from "./i18n";
-import { TextContext } from "./text";
+import { LanguageContext, TextContext } from "./text";
 import { Icon } from "./ui";
 import Home from "./pages/Home";
 import { CacheProvider } from "@emotion/react";
@@ -57,7 +57,7 @@ function isSystemDark() {
   return matchMedia("(prefers-color-scheme: dark)").matches;
 }
 export default function App() {
-  const [lang, setLang] = useState(() => preference("aetheris.lang", "en"));
+  const [lang, setLang] = useState<"en" | "ar">(() => preference("aetheris.lang", "en") === "ar" ? "ar" : "en");
   const [theme, setTheme] = useState(() =>
     preference("aetheris.theme", "system"),
   );
@@ -106,7 +106,7 @@ export default function App() {
   return (
     <CacheProvider value={lang === "ar" ? rtlCache : ltrCache}>
       <ThemeProvider theme={materialTheme}>
-        <TextContext value={t}>
+        <LanguageContext value={lang}><TextContext value={t}>
           <MotionConfig reducedMotion="user">
             <div className="app-shell">
               <aside
@@ -268,7 +268,7 @@ export default function App() {
               </div>
             </div>
           </MotionConfig>
-        </TextContext>
+        </TextContext></LanguageContext>
       </ThemeProvider>
     </CacheProvider>
   );

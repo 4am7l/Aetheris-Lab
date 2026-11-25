@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { CalculationExplanation, CalculationReport } from "./calculation";
 import { finalResultSchema, publicRequestIdSchema, type PublicResult, type RequestInput } from "./domain";
+import { scientificSectionInputSchema, type ScientificDraft } from "./scientificReport";
 
 export type SolutionSide = "A" | "B";
 export type AgentStatus = "running" | "completed" | "unconfigured" | "failed";
@@ -20,7 +21,7 @@ export interface Evidence {
 export interface Identity {
   solution: SolutionSide;
   state: "matched" | "ambiguous" | "missing";
-  records: { name: string; formula: string; cid: number }[];
+  records: { name: string; formula: string; cid: number; molecularWeight?: string; smiles?: string }[];
 }
 
 export type GapCode =
@@ -62,6 +63,21 @@ export interface PreliminaryReport {
   assessment: AgentAssessment | null;
   calculation?: CalculationReport;
   calculationExplanation?: CalculationExplanation;
+  scientificReport?: ScientificDraft;
+}
+
+export function scientificReferences(
+  evidence: Pick<Evidence, "id" | "title" | "url" | "solution">[],
+  calculation?: CalculationReport,
+) {
+  const references = new Map<string, { title: string; url: string; solution?: SolutionSide }>(
+    evidence.map(({ id, title, url, solution }) => [id, { title, url, solution }]),
+  );
+  if (calculation?.status === "calculated") {
+    calculation.references.forEach(({ title, url }, index) =>
+      references.set("method-" + (index + 1), { title, url, solution: undefined }));
+  }
+  return references;
 }
 
 export const reviewDecisions = ["Approved", "Rejected", "Needs More Information"] as const;
@@ -84,6 +100,7 @@ const approvalSchema = z.strictObject({
   limitations: z.array(text).min(1).max(12),
   evidenceIds: z.array(publicRequestIdSchema).max(20),
   externalSources: z.array(source).max(5),
+  scientificSections: scientificSectionInputSchema.optional(),
   attestation: z.literal(true),
 }).refine(({ evidenceIds, externalSources }) => evidenceIds.length + externalSources.length > 0);
 export const reviewInputSchema = z.discriminatedUnion("decision", [

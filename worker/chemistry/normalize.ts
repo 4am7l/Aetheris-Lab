@@ -1,12 +1,17 @@
 import { unknown, type Solution } from "../../src/domain";
 
 export const methanol = {
-  cid: 887, names: ["methanol", "methyl alcohol", "meoh"],
+  cid: 887, names: ["methanol", "methyl alcohol", "meoh", "ميثانول", "الميثانول", "كحول الميثيل"],
   formulas: ["CH4O", "CH3OH"], cas: "67-56-1",
 };
 export const water = {
-  cid: 962, names: ["water", "distilled water", "deionized water", "pure water", "h2o"],
+  cid: 962, names: ["water", "distilled water", "deionized water", "pure water", "h2o",
+    "ماء", "الماء", "ماء مقطر", "ماء نقي", "ماء منزوع الأيونات"],
   formulas: ["H2O"], cas: "7732-18-5",
+};
+export const sodiumChloride = {
+  cid: 5234, names: ["sodium chloride", "كلوريد الصوديوم"],
+  formulas: ["NaCl", "ClNa"], cas: "7647-14-5",
 };
 
 function normalizedText(value: string) {

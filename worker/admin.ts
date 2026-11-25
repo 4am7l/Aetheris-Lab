@@ -4,7 +4,7 @@ import {
   type PublicRequestStatus,
 } from "../src/domain";
 import {
-  adminManageSchema, retryInputSchema, reviewInputSchema, type AdminRequestDetail, type AdminRequestList,
+  adminManageSchema, retryInputSchema, reviewInputSchema, scientificReferences, type AdminRequestDetail, type AdminRequestList,
   type Evidence, type PreliminaryReport, type ReviewDecision,
 } from "../src/review";
 import type { Env } from "./index";
@@ -117,7 +117,7 @@ async function detail(env: Env, id: string) {
 }
 
 async function decide(request: Request, env: Env, requestId: string, reviewer: string) {
-  const input = await readJson(request, 64 * 1024);
+  const input = await readJson(request, 768 * 1024);
   if (input instanceof Response) return input;
   const parsed = reviewInputSchema.safeParse(input);
   if (!parsed.success) return error("INVALID_REVIEW", 400);
@@ -125,12 +125,12 @@ async function decide(request: Request, env: Env, requestId: string, reviewer: s
   const createdAt = new Date().toISOString();
   let approvedResult: string | null = null;
   if (review.decision === "Approved") {
-    const { evidenceIds, externalSources, attestation, ...authored } = review.result;
+    const { evidenceIds, externalSources, scientificSections, attestation, ...authored } = review.result;
     if (!attestation) return error("INVALID_REVIEW", 400);
     const { results } = await env.DB.prepare(
-      `SELECT e.id, e.title, e.url FROM public_assessment_evidence e
+      `SELECT e.id, e.title, e.url, e.solution FROM public_assessment_evidence e
        JOIN public_agent_runs a ON a.id = e.run_id WHERE a.request_id = ? AND e.run_id = ?`,
-    ).bind(requestId, review.runId).all<{ id: string; title: string; url: string }>();
+    ).bind(requestId, review.runId).all<Pick<Evidence, "id" | "title" | "url" | "solution">>();
     const byId = new Map(results.map(({ id, title, url }) => [id, { title, url }]));
     const selected = evidenceIds.map((id) => byId.get(id));
     if (selected.some((source) => !source)) return error("INVALID_EVIDENCE", 400);
@@ -140,8 +140,27 @@ async function decide(request: Request, env: Env, requestId: string, reviewer: s
     const sources = [...new Map(
       [...selected.filter((source) => source !== undefined), ...externalSources].map((source) => [source.url, source]),
     ).values()];
+    let scientificReport;
+    if (scientificSections) {
+      const draft = await env.DB.prepare(
+        `SELECT d.report_json FROM public_assessment_drafts d
+         JOIN public_agent_runs a ON a.id = d.run_id WHERE a.request_id = ? AND a.id = ?`,
+      ).bind(requestId, review.runId).first<{ report_json: string }>();
+      const report = draft ? JSON.parse(draft.report_json) as PreliminaryReport : undefined;
+      const references = scientificReferences(results, report?.calculation);
+      if (scientificSections.some(({ referenceIds }) => referenceIds.some((id) => !references.has(id)))) {
+        return error("INVALID_EVIDENCE", 400);
+      }
+      scientificReport = scientificSections.map(({ referenceIds, ...section }) => {
+        const entries = [...new Set(referenceIds)].map((id) => {
+          const { title, url } = references.get(id)!;
+          return { title, url };
+        });
+        return { ...section, sources: [...new Map(entries.map((entry) => [entry.url, entry])).values()] };
+      });
+    }
     const validated = finalResultSchema.safeParse({
-      ...authored, sources, reviewerId: reviewer, reviewedAt: createdAt, decision: "approved",
+      ...authored, sources, scientificReport, reviewerId: reviewer, reviewedAt: createdAt, decision: "approved",
     });
     if (!validated.success) return error("INVALID_REVIEW", 400);
     approvedResult = JSON.stringify(validated.data);

@@ -2,10 +2,10 @@
 # Enable the scheduled evidence checks for this environment.
 AGENT_ENABLED=false
 
-# Optional provider (gemini or openai). Offline calculations and evidence collection still run.
-# AGENT_SYSTEM_PROMPT is used only by the OpenAI provider.
-AI_PROVIDER=
-AI_MODEL=
+# Gemini uses the default model below. Leave the key unset for evidence-only local work.
+# For the legacy OpenAI adapter, explicitly set AI_PROVIDER=openai, a model, and AGENT_SYSTEM_PROMPT.
+AI_PROVIDER=gemini
+AI_MODEL=gemini-4-hydrogen
 AGENT_API_KEY=
 AGENT_SYSTEM_PROMPT=
 

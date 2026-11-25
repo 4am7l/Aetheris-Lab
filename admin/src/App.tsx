@@ -6,7 +6,7 @@ import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
 import { ThemeProvider } from "@mui/material/styles";
-import { TextContext } from "../../src/text";
+import { LanguageContext, TextContext } from "../../src/text";
 import { createLabTheme, ltrCache, rtlCache } from "../../src/theme";
 import { Icon, Notice } from "../../src/ui";
 import ReviewWorkspace from "./ReviewWorkspace";
@@ -90,7 +90,7 @@ function Login() {
 }
 
 export default function App() {
-  const [language, setLanguage] = useState(() => preference("aetheris.lang") === "ar" ? "ar" : "en");
+  const [language, setLanguage] = useState<"en" | "ar">(() => preference("aetheris.lang") === "ar" ? "ar" : "en");
   const [theme, setTheme] = useState(() => preference("aetheris.theme"));
   const systemDark = useSyncExternalStore(subscribeColor, isSystemDark);
   const mode = theme === "dark" || (theme !== "light" && systemDark) ? "dark" : "light";
@@ -142,7 +142,7 @@ export default function App() {
   return (
     <CacheProvider value={rtl ? rtlCache : ltrCache}>
       <ThemeProvider theme={materialTheme}>
-        <TextContext value={t}>
+        <LanguageContext value={language}><TextContext value={t}>
           <AdminTextContext value={t}>
             <div className="admin-shell">
               <header className="admin-header">
@@ -200,7 +200,7 @@ export default function App() {
               </main>
             </div>
           </AdminTextContext>
-        </TextContext>
+        </TextContext></LanguageContext>
       </ThemeProvider>
     </CacheProvider>
   );

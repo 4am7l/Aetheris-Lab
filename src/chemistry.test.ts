@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { publicInputSchema } from "./domain";
+import { blankSolution, publicInputSchema } from "./domain";
+import { isSaltBalance } from "./calculation";
 import { calculate } from "../worker/chemistry";
 import benchmark from "../tests/fixtures/methanol-dilution.json";
+import nacl from "../tests/fixtures/nacl-pitzer-benchmark.json";
 
 describe("aqueous methanol dilution", () => {
   it("reproduces the published OpenStax Chemistry 2e §3.3 answer after Example 3.19", () => {
@@ -18,7 +20,7 @@ describe("aqueous methanol dilution", () => {
         expect.objectContaining({ url: expect.stringContaining("/887") }),
         expect.objectContaining({ url: expect.stringContaining("/962") })],
     });
-    if (report.status !== "calculated") throw new Error("Published benchmark was declined");
+    if (report.status !== "calculated" || isSaltBalance(report)) throw new Error("Published benchmark was declined");
     expect(Math.abs(report.result.analyticalMolPerL - 0.102)).toBeLessThan(1e-14);
     expect(Object.keys(report.result)).toEqual(["analyticalMolPerL", "measurementUncertainty"]);
   });
@@ -31,7 +33,7 @@ describe("aqueous methanol dilution", () => {
       b: { ...benchmark.b, name: "Deionized water", quantity: "0.6", quantityUnit: "kg" },
       calculation: { ...benchmark.calculation, finalVolume: { value: "640", unit: "mL" } },
     }));
-    if (report.status !== "calculated") throw new Error("Rational benchmark was declined");
+    if (report.status !== "calculated" || isSaltBalance(report)) throw new Error("Rational benchmark was declined");
     // 1/10 mol at 16/25 L yields 5/32 mol/L (exactly representable in binary).
     expect(report.result.analyticalMolPerL).toBe(0.15625);
   });
@@ -86,5 +88,53 @@ describe("aqueous methanol dilution", () => {
         ...benchmark, calculation: { ...benchmark.calculation, ...change },
       }).success).toBe(false);
     }
+  });
+});
+
+describe("aqueous sodium chloride balance", () => {
+  const salt = {
+    ...blankSolution, name: "كلوريد الصوديوم", formula: "NaCl", cas: "7647-14-5",
+    state: "Liquid", solvent: "ماء", temperature: "25",
+  };
+  const first = nacl.cases[0];
+  const request = {
+    a: { ...salt, ...first.stocks[0] },
+    b: { ...salt, ...first.stocks[1] },
+    conditions: "",
+    calculation: {
+      kind: "aqueous-sodium-chloride", assumptionsConfirmed: true,
+      finalVolume: { value: String(first.finalVolumeMl), unit: "mL" },
+    },
+  };
+
+  it.each(nacl.cases)("reproduces the IPhreeqc fixture for $id", (fixture) => {
+    const result = calculate(publicInputSchema.parse({
+      ...request, a: { ...salt, ...fixture.stocks[0] }, b: { ...salt, ...fixture.stocks[1] },
+      calculation: { ...request.calculation, finalVolume: { value: String(fixture.finalVolumeMl), unit: "mL" } },
+    }));
+    if (result.status !== "calculated" || !isSaltBalance(result)) throw new Error("Salt fixture was declined");
+    expect(fixture.haliteMoles).toBe(0);
+    expect(fixture.haliteSi).toBeLessThan(0);
+    for (const ion of [fixture.sodium, fixture.chloride]) {
+      expect(Math.abs(result.amountMolPerIon / ion.amountMol - 1)).toBeLessThan(nacl.relativeTolerance);
+      expect(Math.abs(result.molPerLPerIon / ion.concentrationMolL - 1)).toBeLessThan(nacl.relativeTolerance);
+    }
+    expect(result.references[0].url).toBe("https://webbook.nist.gov/cgi/cbook.cgi?ID=C7647145");
+  });
+
+  it.each([
+    [{ name: "Potassium chloride" }, {}, {}, "identityUnsupported"],
+    [{ solvent: "Ethanol" }, {}, {}, "solventUnsupported"],
+    [{ temperature: "26" }, {}, {}, "temperatureUnsupported"],
+    [{}, { unit: "% w/w" }, {}, "saltConcentration"],
+    [{}, { concentration: "1e-999" }, {}, "saltConcentration"],
+    [{}, { quantity: "0.0001" }, {}, "saltVolume"],
+    [{}, {}, { finalVolume: { value: "0.7", unit: "L" } }, "saltFinalVolume"],
+    [{ notes: "An unidentified component is present" }, {}, {}, "additionalContext"],
+  ])("returns the explicit coverage reason for %j, %j, %j", (a, b, declaration, code) => {
+    expect(calculate(publicInputSchema.parse({
+      ...request, a: { ...request.a, ...a }, b: { ...request.b, ...b },
+      calculation: { ...request.calculation, ...declaration },
+    }))).toEqual({ status: "unsupported", reasons: [expect.objectContaining({ code })] });
   });
 });

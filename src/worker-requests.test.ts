@@ -677,75 +677,176 @@ describe("assessment and reviewer workflow", () => {
   });
 
   it.each([
-    ["valid explanation", "STOP", { focus: "soluteBalance" }, true],
-    ["inapplicable explanation", "STOP", { focus: "missingInputs" }, false],
-    ["invented result", "STOP", { focus: "measuredVolume", concentration: 42 }, false],
-    ["invented citation", "STOP", { focus: "measuredVolume", source: "https://example.invalid" }, false],
-    ["truncated completion", "MAX_TOKENS", { focus: "measuredVolume" }, false],
-  ])("preserves the deterministic draft with a Gemini %s", async (_case, finishReason, output, accepted) => {
-    env.AI_PROVIDER = "gemini";
-    env.AI_MODEL = "gemini-test";
+    ["signed multi-part report", null],
+    ["inapplicable finding", "AI_INVALID_RESPONSE"],
+    ["duplicate finding", "AI_INVALID_RESPONSE"],
+    ["invented property", "AI_INVALID_RESPONSE"],
+    ["missing safety assessment", "AI_INVALID_RESPONSE"],
+    ["truncated response", "AI_INVALID_RESPONSE"],
+    ["malformed JSON", "AI_INVALID_RESPONSE"],
+    ["blocked response", "AI_REJECTED"],
+    ["rate limit", "AI_RATE_LIMITED"],
+    ["timeout", "AI_TIMEOUT"],
+    ["provider unavailable", "AI_UNAVAILABLE"],
+    ["configuration error", "AI_CONFIGURATION"],
+  ])("records a private Gemini %s outcome and keeps the deterministic draft", async (scenario, failureCode) => {
     env.AGENT_API_KEY = "test-gemini-key";
-    const fallback = mockFetch.getMockImplementation();
+    const sourceFetch = mockFetch.getMockImplementation()!;
     const gemini = vi.fn<typeof fetch>(async (resource, options) => {
-      expect(resource).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent");
+      expect(resource).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent");
       expect(new Headers(options?.headers).get("x-goog-api-key")).toBe("test-gemini-key");
-      const body = JSON.parse(String(options?.body));
-      expect(body.contents).toEqual([{ role: "user", parts: [{ text: '{"status":"calculated"}' }] }]);
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+      const raw = String(options?.body);
+      expect(raw).not.toContain("test-gemini-key");
+      const body = JSON.parse(raw);
+      const context = JSON.parse(body.contents[0].parts[0].text);
+      expect(context.calculation.result.analyticalMolPerL).toBeCloseTo(0.102, 14);
       expect(body.generationConfig).toMatchObject({
         responseMimeType: "application/json",
         responseJsonSchema: {
-          properties: { focus: { enum: ["soluteBalance", "measuredVolume"] } },
-          required: ["focus"], additionalProperties: false,
+          properties: { findings: { items: { enum: expect.arrayContaining(["methanolBalance", "reviewRequired"]) } } },
+          required: ["findings"], additionalProperties: false,
         },
       });
-      return Response.json({ candidates: [{ finishReason, content: { parts: [{ text: JSON.stringify(output) }] } }] });
+      if (scenario === "rate limit") return new Response("private upstream detail", { status: 429 });
+      if (scenario === "provider unavailable") return new Response("private upstream detail", { status: 503 });
+      if (scenario === "configuration error") return new Response("private upstream detail", { status: 403 });
+      if (scenario === "timeout") throw new DOMException("private upstream detail", "TimeoutError");
+      if (scenario === "blocked response") return Response.json({ promptFeedback: { blockReason: "SAFETY" } });
+      const required = context.findings.filter((item: { required?: true }) => item.required)
+        .map((item: { code: string }) => item.code).reverse();
+      const findings = scenario === "inapplicable finding" ? [...required, "saltBalance"]
+        : scenario === "duplicate finding" ? [...required, required[0]]
+        : scenario === "missing safety assessment" ? required.filter((code: string) => code !== "reviewRequired")
+        : required;
+      const output = scenario === "malformed JSON" ? "{ bad JSON" : JSON.stringify({
+        findings,
+        ...(scenario === "invented property" ? { concentration: 42, citation: "https://unverified.example" } : {}),
+      });
+      return Response.json({ candidates: [{
+        finishReason: scenario === "truncated response" ? "MAX_TOKENS" : "STOP",
+        content: { parts: [
+          { text: "private raw thought", thought: true, thoughtSignature: "private-signature" },
+          { text: output.slice(0, 12), thoughtSignature: "private-signature" },
+          { thoughtSignature: "private-signature" },
+          { text: output.slice(12) },
+        ] },
+      }] });
     });
     mockFetch.mockImplementation((resource, options) =>
       String(resource).startsWith("https://generativelanguage.googleapis.com/")
         ? gemini(resource, options)
-        : fallback!(resource, options));
+        : sourceFetch(resource, options));
     const response = await post(dilutionBenchmark);
     expect(response.status).toBe(201);
     const receipt = await response.json();
 
+    await Promise.all([scheduled(), scheduled()]);
     await scheduled();
     expect(gemini).toHaveBeenCalledOnce();
     const path = "requests/" + receipt.id;
     const detail = await (await adminCall(path)).json();
     expect(detail.run).toMatchObject({
-      status: accepted ? "completed" : "failed", provider: "gemini", model: "gemini-test",
-      failureCode: accepted ? null : "AI_UNAVAILABLE_OR_INVALID",
+      status: failureCode ? "failed" : "completed", provider: "gemini", model: "gemini-4-hydrogen", failureCode,
     });
-    expect(detail.report.calculation.status).toBe("calculated");
     expect(detail.report.calculation.result.analyticalMolPerL).toBeCloseTo(0.102, 14);
-    expect(detail.report.calculation.references[0]).toMatchObject({
-      title: "OpenStax Chemistry 2e, 3.3 Molarity", checkedOn: "2026-11-25",
+    expect(detail.report.scientificReport).toMatchObject({
+      version: 1, origin: failureCode ? "evidence-review" : "gemini",
+      findings: expect.arrayContaining([{
+        topic: "concentrations", code: "methanolBalance", basis: "calculated",
+        referenceIds: ["method-1", "method-2", "method-3"],
+      }]),
     });
-    expect(detail.report.calculationExplanation).toEqual(accepted ? output : undefined);
+    expect(JSON.stringify(detail)).not.toMatch(/private-signature|private raw thought|private upstream detail|test-gemini-key/);
     expect(await (await track(receipt)).json()).toEqual({
       id: receipt.id, status: "Pending Review", createdAt: receipt.createdAt, updatedAt: expect.any(String),
     });
+    expect((await reviewerRequest(path, { headers: { Authorization: "Bearer " + receipt.trackingToken } })).status).toBe(401);
+    expect((await call("/api/admin/" + path)).status).toBe(403);
 
-    if (accepted) {
-      const decision = await adminCall(path + "/decision", {
+    if (!failureCode) {
+      expect(detail.report.scientificReport.findings[0].code).toBe("reviewRequired");
+      expect((await adminCall(path + "/retry", { runId: detail.run.id })).status).toBe(409);
+      const section = {
+        topic: "concentrations", en: "Reviewer confirmed the nominal concentration of 0.102 mol/L.",
+        ar: "تحقق المراجع من التركيز الاسمي البالغ 0.102 مول/لتر.",
+        referenceIds: ["method-1"],
+      };
+      const review = {
         runId: detail.run.id, decision: "Approved", notes: approvalNotes,
         result: {
           classification: "Insufficient information", conditions: "Documented dilution conditions",
           hazards: [], incompatibilities: [], storage: "Not assessed", container: "Not assessed",
           limitations: ["Compatibility requires separate evidence"], evidenceIds: [],
-          externalSources: detail.report.calculation.references.slice(0, 1).map(
-            ({ title, url }: { title: string; url: string }) => ({ title, url }),
-          ),
-          attestation: true,
+          externalSources: [{ title: "OpenStax Chemistry 2e", url: "https://openstax.org/books/chemistry-2e/pages/3-3-molarity" }],
+          scientificSections: [section], attestation: true,
         },
-      });
-      expect(decision.status).toBe(200);
+      };
+      expect((await adminCall(path + "/decision", {
+        ...review, result: { ...review.result, scientificSections: [{ ...section, referenceIds: [randomUUID()] }] },
+      })).status).toBe(400);
+      expect((await adminCall(path + "/decision", {
+        ...review, result: { ...review.result, scientificSections: [{ ...section, ar: "" }] },
+      })).status).toBe(400);
+      expect((await (await track(receipt)).json()).result).toBeUndefined();
+      expect((await adminCall(path + "/decision", review)).status).toBe(200);
       const published = await (await track(receipt)).json();
-      expect(published.status).toBe("Approved");
-      expect(published.result).toMatchObject({ conditions: "Documented dilution conditions" });
-      expect(JSON.stringify(published)).not.toMatch(/calculation|soluteBalance|0\.102/);
+      expect(published).toMatchObject({
+        status: "Approved", result: { scientificReport: [{
+          topic: section.topic, en: section.en, ar: section.ar,
+          sources: [{ title: "OpenStax Chemistry 2e, 3.3 Molarity", url: review.result.externalSources[0].url }],
+        }] },
+      });
+      expect(JSON.stringify(published)).not.toMatch(/methanolBalance|measurementUncertainty|method-1|test-gemini-key|stockMolPerL/);
     }
+  });
+
+  it("grounds Gemini in matched sources, withholds private data, and keeps rejection private", async () => {
+    env.AGENT_API_KEY = "test-gemini-key";
+    const receipt = await (await post(documented)).json();
+    const sourceFetch = mockFetch.getMockImplementation()!;
+    const gemini = vi.fn<typeof fetch>(async (_resource, options) => {
+      const raw = String(options?.body);
+      for (const secret of [documented.a.notes, documented.conditions, receipt.trackingToken, env.ADMIN_PASSWORD]) {
+        expect(raw).not.toContain(secret);
+      }
+      const body = JSON.parse(raw);
+      const context = JSON.parse(body.contents[0].parts[0].text);
+      expect(context.evidence).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: "PubChem", excerpt: expect.stringContaining("C3H8O3") }),
+        expect.objectContaining({ source: "NIOSH", excerpt: "Irritation" }),
+      ]));
+      const findings = context.findings.map(({ code }: { code: string }) => code);
+      return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ findings }) }] } }] });
+    });
+    mockFetch.mockImplementation((resource, options) =>
+      String(resource).startsWith("https://generativelanguage.googleapis.com/")
+        ? gemini(resource, options)
+        : sourceFetch(resource, options));
+    await scheduled();
+    expect(gemini).toHaveBeenCalledOnce();
+    const path = "requests/" + receipt.id;
+    const detail = await (await adminCall(path)).json();
+    expect(detail.report.scientificReport.origin).toBe("gemini");
+    expect(detail.report.scientificReport.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "occupationalHazards", basis: "retrieved", referenceIds: [expect.any(String)] }),
+    ]));
+    expect((await adminCall(path + "/decision", { runId: detail.run.id, decision: "Rejected", notes: approvalNotes })).status).toBe(200);
+    const published = await (await track(receipt)).json();
+    expect(published.status).toBe("Rejected");
+    expect(published.result).toBeUndefined();
+    expect(JSON.stringify(published)).not.toContain(approvalNotes);
+  });
+
+  it("skips Gemini when neither matched evidence nor a validated calculation is available", async () => {
+    env.AGENT_API_KEY = "test-gemini-key";
+    const receipt = await (await post(input)).json();
+    await scheduled();
+    expect(mockFetch.mock.calls.some(([url]) => String(url).includes("generativelanguage.googleapis.com"))).toBe(false);
+    const detail = await (await adminCall("requests/" + receipt.id)).json();
+    expect(detail.report.scientificReport.origin).toBe("evidence-review");
+    expect(detail.report.scientificReport.findings.map(({ code }: { code: string }) => code))
+      .toContain("modelUnavailable");
   });
 
   it("runs the agent once, keeps evidence private, and publishes only the human decision to its token owner", async () => {

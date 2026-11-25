@@ -15,6 +15,7 @@ const privateMarkers = [
   /\/admin(?:[/"'`?]|$)/,
   /admin-(?:toolbar|form|grid|evidence|login|shell)/,
   /Reviewer sign-in|Enter the admin password|Publish approved assessment|Retrieved source evidence/,
+  /Gemini scientific assessment|generativelanguage\.googleapis\.com|AGENT_API_KEY|private raw thought|methanolBalance/,
 ];
 for (const file of files) {
   if (!/\.(html|js|css|json)$/.test(file)) continue;

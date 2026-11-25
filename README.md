@@ -43,7 +43,7 @@ npm test
 - Four actual NIOSH substance records checked 2026-11-20; indexed name, alias, ASCII formula/subscript normalization, CAS and category search. No invented records, GHS claims, or solution-specific conclusions.
 - Browser-local drafts with JSON download. Older preview records remain readable as archived local data.
 - Public intake and token-protected tracking through a same-origin Pages Function, with rate limiting and D1 storage in the Worker. The browser stores a private, removable tracking token for each receipt. See [Cloudflare setup and API contract](docs/cloudflare.md).
-- Scheduled PubChem and NIOSH evidence collection, optional AI screening, and a protected bilingual expert review dashboard in the separate admin app.
+- Scheduled PubChem and NIOSH evidence collection, deterministic chemical calculations, Gemini scientific assessments, and a protected bilingual expert review dashboard.
 - Final results come from server-side reviewer approval. Local drafts remain separate from the publication workflow.
 
 ## Project map
@@ -74,6 +74,6 @@ npm test
 
 ## Assessment and review
 
-Submitted requests move through **Analyzing** and **Pending Review** before a qualified reviewer records a decision. The agent checks PubChem and NIOSH sources and can use an optional AI provider to flag evidence for private review. Reviewers write the final assessment, select citations, and approve publication. Only the matching tracking token can access an approved result.
+Submitted requests move through **Analyzing** and **Pending Review** before a qualified reviewer records a decision. The Worker retrieves evidence, applies supported chemistry models, and can use Gemini to assemble a private scientific assessment. Reviewers correct bilingual sections, select citations, and approve publication. The matching tracking token grants access to the approved result. See [scientific coverage](docs/scientific-engine.md) and the [manual staging test](docs/cloudflare.md#one-manual-gemini-test).
 
 See [Cloudflare configuration](docs/cloudflare.md) for the two Pages projects, migrations, password sign-in, and provider setup. The [administrator guide](docs/admin-review.md) covers review actions and audit behavior.
