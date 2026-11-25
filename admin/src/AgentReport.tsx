@@ -2,6 +2,7 @@ import type { AdminRequestDetail, Evidence, GapCode } from "../../src/review";
 import type { AdminTextKey } from "./i18n";
 import { useAdminText as useText } from "./text";
 import { Notice } from "../../src/ui";
+import { ChemistryReport } from "./ChemistryReport";
 
 const gapLabels: Record<GapCode, AdminTextKey> = {
   identity: "identityMissing",
@@ -96,6 +97,7 @@ export function AgentReport({ request }: { request: AdminRequestDetail }) {
           </div>
         </>
       )}
+      {report && <ChemistryReport report={report} />}
       <section>
         <h3>{t("retrievedEvidence")}</h3>
         {evidence.length === 0 && <p className="muted">{t("noRetrievedEvidence")}</p>}

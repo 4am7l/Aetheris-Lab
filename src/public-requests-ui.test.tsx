@@ -100,6 +100,24 @@ afterEach(() => {
 });
 
 describe("real submission", () => {
+  it("submits a measured volume only after the structured declaration", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ ...receipt, trackingToken: token }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json(receipt));
+    mount();
+    const submit = fillRequest() as HTMLButtonElement;
+    expect(screen.queryByRole("spinbutton", { name: en.chemistryFinalVolume })).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: en.chemistryOptIn }));
+    expect(submit.disabled).toBe(true);
+    fireEvent.change(screen.getByRole("spinbutton", { name: en.chemistryFinalVolume }), { target: { value: "499.5" } });
+    expect(submit.disabled).toBe(false);
+    fireEvent.click(submit);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      calculationContext: { closedWaterAndSaltOnly: true, atAmbientPressure: true, finalVolumeMl: 499.5 },
+    });
+    expect(await screen.findByRole("heading", { name: en.receipt })).toBeTruthy();
+  });
+
   it("posts the exact form contract once for two rapid clicks and tracks the returned receipt", async () => {
     let respond!: (response: Response) => void;
     fetchMock

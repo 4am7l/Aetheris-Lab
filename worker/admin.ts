@@ -7,6 +7,7 @@ import {
   adminManageSchema, retryInputSchema, reviewInputSchema, type AdminRequestDetail, type AdminRequestList,
   type Evidence, type PreliminaryReport, type ReviewDecision,
 } from "../src/review";
+import { calculationResultSchema } from "../src/chemistry";
 import type { Env } from "./index";
 import { providerFor } from "./ai";
 import { error, json, readJson } from "./http";
@@ -125,7 +126,7 @@ async function decide(request: Request, env: Env, requestId: string, reviewer: s
   const createdAt = new Date().toISOString();
   let approvedResult: string | null = null;
   if (review.decision === "Approved") {
-    const { evidenceIds, externalSources, attestation, ...authored } = review.result;
+    const { evidenceIds, externalSources, attestation, includeCalculation, ...authored } = review.result;
     if (!attestation) return error("INVALID_REVIEW", 400);
     const { results } = await env.DB.prepare(
       `SELECT e.id, e.title, e.url FROM public_assessment_evidence e
@@ -140,8 +141,23 @@ async function decide(request: Request, env: Env, requestId: string, reviewer: s
     const sources = [...new Map(
       [...selected.filter((source) => source !== undefined), ...externalSources].map((source) => [source.url, source]),
     ).values()];
+    let calculation;
+    if (includeCalculation) {
+      const draft = await env.DB.prepare(
+        `SELECT d.report_json AS reportJson FROM public_assessment_drafts d
+         JOIN public_request_workflow w ON w.run_id = d.run_id
+         WHERE w.request_id = ? AND d.run_id = ? AND w.status = 'Pending Review' AND w.archived_at IS NULL`,
+      ).bind(requestId, review.runId).first<{ reportJson: string }>();
+      if (!draft) return error("STALE_REVIEW", 409);
+      const report = JSON.parse(draft.reportJson) as PreliminaryReport;
+      const parsedCalculation = calculationResultSchema.safeParse(
+        report.calculation?.status === "calculated" ? report.calculation.result : undefined,
+      );
+      if (!parsedCalculation.success) return error("CALCULATION_UNAVAILABLE", 400);
+      calculation = parsedCalculation.data;
+    }
     const validated = finalResultSchema.safeParse({
-      ...authored, sources, reviewerId: reviewer, reviewedAt: createdAt, decision: "approved",
+      ...authored, sources, calculation, reviewerId: reviewer, reviewedAt: createdAt, decision: "approved",
     });
     if (!validated.success) return error("INVALID_REVIEW", 400);
     approvedResult = JSON.stringify(validated.data);

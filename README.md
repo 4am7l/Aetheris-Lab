@@ -76,4 +76,6 @@ npm test
 
 Submitted requests move through **Analyzing** and **Pending Review** before a qualified reviewer records a decision. The agent checks PubChem and NIOSH sources and can use an optional AI provider to flag evidence for private review. Reviewers write the final assessment, select citations, and approve publication. Only the matching tracking token can access an approved result.
 
+See the [Phase 5 chemistry architecture and coverage matrix](docs/phase-5-chemistry.md) for the sodium chloride benchmark and optional Gemini configuration.
+
 See [Cloudflare configuration](docs/cloudflare.md) for the two Pages projects, migrations, password sign-in, and provider setup. The [administrator guide](docs/admin-review.md) covers review actions and audit behavior.
