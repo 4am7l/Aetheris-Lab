@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Calculation, ExplanationTopic } from "./chemistry";
 import { finalResultSchema, publicRequestIdSchema, type PublicResult, type RequestInput } from "./domain";
 
 export type SolutionSide = "A" | "B";
@@ -59,6 +60,8 @@ export interface PreliminaryReport {
   identities: Identity[];
   gaps: EvidenceGap[];
   assessment: AgentAssessment | null;
+  calculation?: Calculation;
+  calculationExplanation?: ExplanationTopic[];
 }
 
 export const reviewDecisions = ["Approved", "Rejected", "Needs More Information"] as const;
@@ -82,6 +85,7 @@ const approvalSchema = z.strictObject({
   evidenceIds: z.array(publicRequestIdSchema).max(20),
   externalSources: z.array(source).max(5),
   attestation: z.literal(true),
+  includeCalculation: z.literal(true).optional(),
 }).refine(({ evidenceIds, externalSources }) => evidenceIds.length + externalSources.length > 0);
 export const reviewInputSchema = z.discriminatedUnion("decision", [
   z.strictObject({

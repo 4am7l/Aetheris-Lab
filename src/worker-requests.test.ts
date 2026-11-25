@@ -416,6 +416,13 @@ describe("assessment and reviewer workflow", () => {
           card("CAS No.", "56-81-5") + card("Symptoms", "Irritation"),
         );
       }
+      if (url.hostname === "generativelanguage.googleapis.com") {
+        const body = JSON.parse(String(options?.body));
+        const allowed = body.generationConfig.responseJsonSchema.properties.topics.items.enum;
+        return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{
+          text: JSON.stringify({ topics: allowed.slice(0, 2).reverse(), ...(badOutput ? { value: 1 } : {}) }),
+        }] } }] });
+      }
       if (url.href === "https://api.openai.com/v1/chat/completions") {
         const raw = String(options?.body);
         expect(raw).not.toContain(documented.a.notes);
@@ -773,6 +780,95 @@ describe("assessment and reviewer workflow", () => {
     expect(db.prepare("SELECT request_id, action, actor FROM public_request_management_events").all()).toEqual([
       { request_id: receipt.id, action: "delete", actor: reviewerActor },
     ]);
+  });
+
+  async function sodiumChlorideRequest() {
+    const stock = {
+      ...blankSolution, name: "Sodium chloride", formula: "NaCl", cas: "7647-14-5",
+      solvent: "Water", state: "Liquid", temperature: "25", unit: "mol/L",
+      concentration: "0.01", quantity: "100", quantityUnit: "mL",
+    };
+    const response = await post({
+      a: stock, b: { ...stock, concentration: "0.002", quantity: "400" }, conditions: "",
+      calculationContext: { closedWaterAndSaltOnly: true, atAmbientPressure: true, finalVolumeMl: 499 },
+    });
+    expect(response.status).toBe(201);
+    return response.json() as Promise<{ id: string; trackingToken: string }>;
+  }
+
+  it.each([true, false])("requires a reviewer to explicitly include a stored calculation (%s)", async (include) => {
+    env.AI_PROVIDER = "gemini";
+    env.AI_MODEL = "gemini-test";
+    env.AGENT_API_KEY = "test-key";
+    const receipt = await sodiumChlorideRequest();
+    const path = "requests/" + receipt.id;
+    await scheduled();
+
+    const pending = await (await track(receipt)).json();
+    expect(pending).toMatchObject({ status: "Pending Review" });
+    expect(pending).not.toHaveProperty("result");
+    const detail = await (await adminCall(path)).json();
+    expect(detail.run).toMatchObject({ status: "completed", provider: "gemini" });
+    expect(detail.report).toMatchObject({
+      calculationExplanation: ["modelScope", "massBalance"],
+      calculation: { status: "calculated", result: { model: "dilute-aqueous-nacl" } },
+    });
+    const review = {
+      runId: detail.run.id, decision: "Approved", notes: approvalNotes,
+      result: {
+        classification: "Insufficient information", conditions: "Measured aqueous mixture at 25 °C",
+        hazards: [], incompatibilities: [], storage: "Not assessed", container: "Not assessed",
+        limitations: ["The mass balance is limited to the declared formulation."],
+        evidenceIds: [], externalSources: [{ title: "NIST SRD 69", url: "https://webbook.nist.gov/cgi/cbook.cgi?ID=C7647145" }],
+        ...(include ? { includeCalculation: true } : {}), attestation: true,
+      },
+    };
+    const decision = path + "/decision";
+    expect((await adminCall(decision, review, "")).status).toBe(401);
+    expect((await adminCall(decision, { ...review, result: { ...review.result, calculation: { amount: 99 } } })).status).toBe(400);
+    expect((await adminCall(decision, { ...review, result: { ...review.result, attestation: false } })).status).toBe(400);
+    expect((await adminCall(decision, { ...review, runId: randomUUID() })).status).toBe(409);
+    expect((await adminCall(decision, review)).status).toBe(200);
+    const published = await (await track(receipt)).json();
+    expect(published.status).toBe("Approved");
+    if (include) expect(published.result.calculation).toEqual(detail.report.calculation.result);
+    else expect(published.result).not.toHaveProperty("calculation");
+    expect(JSON.stringify(published)).not.toMatch(/calculationExplanation|reviewerId|trackingToken/);
+  });
+
+  it("retains the deterministic result when Gemini returns invalid output", async () => {
+    env.AI_PROVIDER = "gemini";
+    env.AI_MODEL = "gemini-test";
+    env.AGENT_API_KEY = "test-key";
+    badOutput = true;
+    const receipt = await sodiumChlorideRequest();
+    await scheduled();
+    const detail = await (await adminCall("requests/" + receipt.id)).json();
+    expect(detail.run).toMatchObject({ status: "failed", failureCode: "GEMINI_UNAVAILABLE_OR_INVALID" });
+    expect(detail.report.calculation.status).toBe("calculated");
+    expect(detail.report).not.toHaveProperty("calculationExplanation");
+    expect(detail.canRetry).toBe(true);
+    expect(await (await track(receipt)).json()).not.toHaveProperty("result");
+  });
+
+  it("rejects a publication request for an unsupported calculation", async () => {
+    const receipt = await (await post(documented)).json();
+    await scheduled();
+    const path = "requests/" + receipt.id;
+    const detail = await (await adminCall(path)).json();
+    expect(detail.report.calculation.status).toBe("unsupported");
+    const response = await adminCall(path + "/decision", {
+      runId: detail.run.id, decision: "Approved", notes: approvalNotes,
+      result: {
+        classification: "Insufficient information", conditions: "Unknown",
+        hazards: [], incompatibilities: [], storage: "Not assessed", container: "Not assessed",
+        limitations: ["Outside model coverage."], evidenceIds: [detail.evidence[0].id], externalSources: [],
+        includeCalculation: true, attestation: true,
+      },
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "CALCULATION_UNAVAILABLE" });
+    expect(await (await track(receipt)).json()).toMatchObject({ status: "Pending Review" });
   });
 
   it.each(["Rejected", "Needs More Information"])("reports %s without notes or draft when AI is unconfigured", async (decision) => {

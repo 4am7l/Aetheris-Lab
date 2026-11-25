@@ -2,6 +2,7 @@ import { useText } from "../text";
 import type { PublicResult } from "../domain";
 import { resultLabel } from "../reviewText";
 import { Icon, Notice } from "../ui";
+import { ChemistryResult } from "./ChemistryResult";
 
 export function ApprovedResultPanel({ result }: { result: PublicResult }) {
   const t = useText();
@@ -28,6 +29,7 @@ export function ApprovedResultPanel({ result }: { result: PublicResult }) {
           <p dir="auto">{result.container}</p>
         </section>
       </div>
+      {result.calculation && <ChemistryResult result={result.calculation} />}
       <h3>{t("limitations")}</h3>
       <ul>{result.limitations.map((item, index) => <li key={index} dir="auto">{item}</li>)}</ul>
       <h3>{t("references")}</h3>

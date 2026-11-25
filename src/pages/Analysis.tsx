@@ -7,6 +7,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { SolutionCard, type ImageAttachment } from "../components/SolutionCard";
 import type { Solution } from "../domain";
+import { calculationContextSchema } from "../chemistry";
 import { saveLocalRequest } from "../services/local";
 import { RequestError, submitRequest } from "../services/publicRequests";
 import { useRetryDelay } from "../services/useRetryDelay";
@@ -25,6 +26,13 @@ export default function Analysis() {
   const [imageB, setImageB] = useState<ImageAttachment | null>(null);
   const [attachPhotos, setAttachPhotos] = useState(false);
   const [conditions, setConditions] = useState("");
+  const [confirmComposition, setConfirmComposition] = useState(false);
+  const [finalVolume, setFinalVolume] = useState("");
+  const measuredContext = calculationContextSchema.safeParse({
+    closedWaterAndSaltOnly: true, atAmbientPressure: true, finalVolumeMl: Number(finalVolume),
+  });
+  const invalidContext = confirmComposition && !measuredContext.success;
+  const calculationContext = confirmComposition ? measuredContext.data : undefined;
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<RequestError>();
   const [confirmRetry, setConfirmRetry] = useState(false);
@@ -54,9 +62,9 @@ export default function Analysis() {
   );
 
   function saveDraft() {
-    if (!a || !b || inFlight.current) return;
+    if (!a || !b || inFlight.current || invalidContext) return;
     try {
-      const draft = saveLocalRequest({ a, b, conditions });
+      const draft = saveLocalRequest({ a, b, conditions, calculationContext });
       void client.invalidateQueries({ queryKey: ["requests"] });
       navigate("/requests/" + draft.id);
     } catch {
@@ -65,7 +73,7 @@ export default function Analysis() {
   }
 
   async function submit() {
-    if (!a || !b || inFlight.current || cooldown) return;
+    if (!a || !b || inFlight.current || cooldown || invalidContext) return;
     // Lock synchronously before React renders the disabled button.
     inFlight.current = true;
     setConfirmRetry(false);
@@ -74,7 +82,7 @@ export default function Analysis() {
     setDraftError(false);
     try {
       const id = await submitRequest(
-        { a, b, conditions },
+        { a, b, conditions, calculationContext },
         attachPhotos ? { imageA: imageA?.file, imageB: imageB?.file } : undefined,
       );
       if (active.current)
@@ -131,6 +139,21 @@ export default function Analysis() {
             slotProps={{ htmlInput: { maxLength: 3000 } }}
           />
           <p className="small muted">{t("unknownFields")}</p>
+          <FormControlLabel
+            label={t("chemistryOptIn")}
+            control={<Checkbox checked={confirmComposition} onChange={(_, value) => setConfirmComposition(value)} />}
+          />
+          {confirmComposition && (
+            <TextField
+              fullWidth
+              type="number"
+              label={t("chemistryFinalVolume")}
+              value={finalVolume}
+              onChange={(event) => setFinalVolume(event.target.value)}
+              error={invalidContext && finalVolume !== ""}
+              helperText={invalidContext ? t("chemistryVolumeInvalid") : t("chemistryVolumeHelp")}
+            />
+          )}
         </section>
       </fieldset>
       <section className="submission-panel" aria-busy={pending}>
@@ -147,7 +170,7 @@ export default function Analysis() {
         )}
         <Button
           variant="contained"
-          disabled={!a || !b || pending || cooldown}
+          disabled={!a || !b || pending || cooldown || invalidContext}
           onClick={() =>
             failure?.code === "unconfirmed"
               ? setConfirmRetry(true)
@@ -179,7 +202,7 @@ export default function Analysis() {
         <p>{t("localNotice")}</p>
         <Button
           variant="outlined"
-          disabled={!a || !b || pending}
+          disabled={!a || !b || pending || invalidContext}
           onClick={saveDraft}
         >
           <Icon name="save" />

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { assessmentSchema, type Evidence, type PreliminaryReport } from "../src/review";
 import { readBytes } from "./http";
+import { geminiFor } from "./chemistry/gemini";
 
 export interface AIConfig {
   AI_PROVIDER?: string;
@@ -13,11 +14,12 @@ export function providerFor(config: AIConfig) {
   const model = config.AI_MODEL?.trim();
   const key = config.AGENT_API_KEY?.trim();
   const instructions = config.AGENT_SYSTEM_PROMPT?.trim();
-  if (config.AI_PROVIDER !== "openai" || !model || !/^[\w.:-]{1,128}$/.test(model)
-    || !key || !instructions) return null;
+  if (!model || !key) return null;
+  if (config.AI_PROVIDER === "gemini") return geminiFor(model, key);
+  if (config.AI_PROVIDER !== "openai" || !/^[\w.:-]{1,128}$/.test(model) || !instructions) return null;
 
   return {
-    name: "openai",
+    name: "openai" as const,
     model,
     async assess(report: PreliminaryReport, evidence: Evidence[]) {
       // The provider receives source data and coded gaps. It cannot call tools or emit prose.

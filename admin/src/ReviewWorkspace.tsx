@@ -216,6 +216,10 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
             <section>
               <h3>{t("conditions")}</h3>
               <p dir="auto">{request.input.conditions || "—"}</p>
+              {request.input.calculationContext && <>
+                <p>{t("chemistryOptIn")}</p>
+                <p>{t("chemistryFinalVolume")} · <bdi>{request.input.calculationContext.finalVolumeMl}</bdi></p>
+              </>}
             </section>
             <section>
               <h3>{t("privatePhotos")}</h3>

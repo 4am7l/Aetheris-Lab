@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { calculationContextSchema, calculationResultSchema } from "./chemistry";
 export const statuses = [
   "Draft",
   "Submitted",
@@ -102,6 +103,7 @@ export const requestInputSchema = z.object({
   a: solutionSchema,
   b: solutionSchema,
   conditions: z.string().max(3000),
+  calculationContext: calculationContextSchema.optional(),
 });
 export type RequestInput = z.infer<typeof requestInputSchema>;
 const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
@@ -193,6 +195,7 @@ export const finalResultSchema = z.object({
   reviewerId: z.string().min(1),
   reviewedAt: z.iso.datetime(),
   decision: z.literal("approved"),
+  calculation: calculationResultSchema.optional(),
 });
 export type ApprovedResult = z.infer<typeof finalResultSchema>;
 export const publicResultSchema = finalResultSchema.omit({ reviewerId: true, decision: true });

@@ -35,6 +35,8 @@ export function ReviewForm({ request, busy, onSubmit }: {
   const [selected, setSelected] = useState<string[]>([]);
   const [externalSources, setExternalSources] = useState<{ title: string; url: string }[]>([]);
   const [attestation, setAttestation] = useState(false);
+  const [includeCalculation, setIncludeCalculation] = useState(false);
+  const canIncludeCalculation = request.report?.calculation?.status === "calculated";
   const [invalid, setInvalid] = useState(false);
   const approval = decision === "Approved";
 
@@ -51,6 +53,7 @@ export function ReviewForm({ request, busy, onSubmit }: {
         incompatibilities: items(fields.incompatibilities),
         limitations: items(fields.limitations),
         evidenceIds: selected, externalSources, attestation,
+        includeCalculation: canIncludeCalculation && includeCalculation ? true : undefined,
       },
     } : base);
     const needsMixtureSource = approval && classification === "Compatible under documented conditions" && !externalSources.length;
@@ -126,6 +129,10 @@ export function ReviewForm({ request, busy, onSubmit }: {
                   {t("addReference")}
                 </Button>
               </div>}
+              {canIncludeCalculation && (
+                <FormControlLabel label={t("includeCalculation")}
+                  control={<Checkbox checked={includeCalculation} onChange={(_, checked) => setIncludeCalculation(checked)} />} />
+              )}
               <FormControlLabel label={t("reviewAttestation")}
                 control={<Checkbox checked={attestation} onChange={(_, checked) => setAttestation(checked)} />} />
             </>
