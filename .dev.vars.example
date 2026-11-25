@@ -2,7 +2,8 @@
 # Enable the scheduled evidence checks for this environment.
 AGENT_ENABLED=false
 
-# Optional provider. A missing key leaves evidence collection available without AI output.
+# Optional provider (gemini or openai). Offline calculations and evidence collection still run.
+# AGENT_SYSTEM_PROMPT is used only by the OpenAI provider.
 AI_PROVIDER=
 AI_MODEL=
 AGENT_API_KEY=

@@ -2,6 +2,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { publicInputSchema } from "../src/domain";
 import type { AgentStatus, Evidence, PreliminaryReport } from "../src/review";
 import { providerFor, type AIConfig } from "./ai";
+import { calculate } from "./chemistry";
 import { scientificSources } from "./sources";
 
 type AgentEnv = AIConfig & { DB: D1Database; AGENT_ENABLED?: string };
@@ -64,6 +65,7 @@ export async function processNextRequest(env: AgentEnv) {
     const request = await db.prepare("SELECT input_json FROM public_requests WHERE id = ?")
       .bind(run.requestId).first<{ input_json: string }>();
     const input = publicInputSchema.parse(JSON.parse(request?.input_json ?? "null"));
+    const calculation = calculate(input);
     const collect = scientificSources();
     const results = await Promise.all([collect(input.a, "A"), collect(input.b, "B")]);
     evidence = results.flatMap((result) => result.evidence);
@@ -71,9 +73,17 @@ export async function processNextRequest(env: AgentEnv) {
       identities: results.map((result) => result.identity),
       gaps: results.flatMap((result) => result.gaps),
       assessment: null,
+      calculation,
     };
     if (!input.conditions.trim()) report.gaps.push({ code: "conditions" });
-    if (provider) {
+    if (provider?.name === "gemini") {
+      try {
+        report.calculationExplanation = await provider.explain(calculation);
+      } catch {
+        status = "failed";
+        failure = "AI_UNAVAILABLE_OR_INVALID";
+      }
+    } else if (provider) {
       if (!evidence.length && report.gaps.some(({ code }) =>
         code === "pubchemUnavailable" || code === "nioshUnavailable")) {
         status = "failed";

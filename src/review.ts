@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CalculationExplanation, CalculationReport } from "./calculation";
 import { finalResultSchema, publicRequestIdSchema, type PublicResult, type RequestInput } from "./domain";
 
 export type SolutionSide = "A" | "B";
@@ -59,6 +60,8 @@ export interface PreliminaryReport {
   identities: Identity[];
   gaps: EvidenceGap[];
   assessment: AgentAssessment | null;
+  calculation?: CalculationReport;
+  calculationExplanation?: CalculationExplanation;
 }
 
 export const reviewDecisions = ["Approved", "Rejected", "Needs More Information"] as const;

@@ -164,6 +164,24 @@ describe("real submission", () => {
     expect(document.body.textContent).not.toContain(token);
   });
 
+  it("submits the measured final volume only after an explicit dilution declaration", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "INVALID_REQUEST" }, { status: 400 }));
+    mount();
+    const submit = fillRequest();
+    fireEvent.click(screen.getByRole("checkbox", { name: en.dilutionOptIn }));
+    const volume = screen.getByRole("textbox", { name: en.dilutionFinalVolume });
+    fireEvent.change(volume, { target: { value: "500 mL" } });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.change(volume, { target: { value: "500.0" } });
+    fireEvent.click(submit);
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).calculation).toEqual({
+      kind: "aqueous-dilution", assumptionsConfirmed: true,
+      finalVolume: { value: "500.0", unit: "mL" },
+    });
+    await screen.findByText(en.submissionInvalid);
+  });
+
   it("rejects invalid input in the dialog and shows a safe error for server validation failures", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({ error: token }, { status: 400 }),

@@ -1,4 +1,9 @@
 export const en = {
+  dilutionOptIn: "Evaluate a documented aqueous methanol dilution",
+  dilutionAssumptions: "I confirm A is a liquid stock of methanol in water, B is pure liquid water, and the stock, water, and measured final solution are at 25 °C. The stock solute is retained in a homogeneous liquid. Enter A’s molarity and volume and leave B’s concentration unknown. Include other conditions or formulation details in the notes.",
+  dilutionFinalVolume: "Measured final solution volume",
+  dilutionFinalVolumeUnit: "Final volume unit",
+  dilutionVolumeInvalid: "Enter a decimal volume in L or mL.",
   attachReviewPhotos: "Include label photos for the reviewer",
   photosPrivate: "Attached photos are stored privately for the reviewer.",
   analyzingStatus: "Analyzing",
@@ -222,6 +227,11 @@ export const en = {
 export type TextKey = keyof typeof en;
 // Partial dictionary fallback keeps new keys safe; expand and professionally review before public Arabic release.
 export const ar: Partial<Record<TextKey, string>> = {
+  dilutionOptIn: "تقييم تخفيف موثّق لمحلول الميثانول المائي",
+  dilutionAssumptions: "أؤكد أن أ محلول سائل من الميثانول في الماء، وأن ب ماء سائل نقي، وأن المحلول الأصلي والماء والمحلول النهائي المقاس جميعها عند 25 °م. تبقى المادة المذابة في سائل متجانس. أدخل التركيز المولي وحجم أ، واترك تركيز ب غير معروف. أضف أي ظروف أو تفاصيل أخرى عن التركيبة في الملاحظات.",
+  dilutionFinalVolume: "الحجم المقاس للمحلول النهائي",
+  dilutionFinalVolumeUnit: "وحدة الحجم النهائي",
+  dilutionVolumeInvalid: "أدخل الحجم بصيغة عشرية باللتر أو الملليلتر.",
   attachReviewPhotos: "إرفاق صور الملصقات للمراجع",
   photosPrivate: "تُحفظ الصور المرفقة بشكل خاص ليطّلع عليها المراجع.",
   analyzingStatus: "قيد التحليل",

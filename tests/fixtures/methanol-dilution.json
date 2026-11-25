@@ -1,0 +1,36 @@
+{
+  "a": {
+    "name": "Methanol",
+    "formula": "CH3OH",
+    "cas": "67-56-1",
+    "concentration": "2.04",
+    "unit": "mol/L",
+    "solvent": "Water",
+    "state": "Liquid",
+    "temperature": "25",
+    "quantity": "25.0",
+    "quantityUnit": "mL",
+    "notes": "",
+    "source": "Manual entry"
+  },
+  "b": {
+    "name": "Water",
+    "formula": "H2O",
+    "cas": "7732-18-5",
+    "concentration": "Unknown",
+    "unit": "Unknown",
+    "solvent": "Unknown",
+    "state": "Liquid",
+    "temperature": "25",
+    "quantity": "Unknown",
+    "quantityUnit": "Unknown",
+    "notes": "",
+    "source": "Manual entry"
+  },
+  "conditions": "",
+  "calculation": {
+    "kind": "aqueous-dilution",
+    "assumptionsConfirmed": true,
+    "finalVolume": { "value": "500.0", "unit": "mL" }
+  }
+}

@@ -4,6 +4,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "../worker";
 import { blankSolution } from "./domain";
+import dilutionBenchmark from "../tests/fixtures/methanol-dilution.json";
 
 const collection = "/api/requests";
 const sample = { ...blankSolution, name: "Documented sample" };
@@ -673,6 +674,78 @@ describe("assessment and reviewer workflow", () => {
     expect(await (await adminCall("session", undefined, rotated.session)).json()).toEqual({
       reviewer, csrfToken: rotated.csrfToken,
     });
+  });
+
+  it.each([
+    ["valid explanation", "STOP", { focus: "soluteBalance" }, true],
+    ["inapplicable explanation", "STOP", { focus: "missingInputs" }, false],
+    ["invented result", "STOP", { focus: "measuredVolume", concentration: 42 }, false],
+    ["invented citation", "STOP", { focus: "measuredVolume", source: "https://example.invalid" }, false],
+    ["truncated completion", "MAX_TOKENS", { focus: "measuredVolume" }, false],
+  ])("preserves the deterministic draft with a Gemini %s", async (_case, finishReason, output, accepted) => {
+    env.AI_PROVIDER = "gemini";
+    env.AI_MODEL = "gemini-test";
+    env.AGENT_API_KEY = "test-gemini-key";
+    const fallback = mockFetch.getMockImplementation();
+    const gemini = vi.fn<typeof fetch>(async (resource, options) => {
+      expect(resource).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent");
+      expect(new Headers(options?.headers).get("x-goog-api-key")).toBe("test-gemini-key");
+      const body = JSON.parse(String(options?.body));
+      expect(body.contents).toEqual([{ role: "user", parts: [{ text: '{"status":"calculated"}' }] }]);
+      expect(body.generationConfig).toMatchObject({
+        responseMimeType: "application/json",
+        responseJsonSchema: {
+          properties: { focus: { enum: ["soluteBalance", "measuredVolume"] } },
+          required: ["focus"], additionalProperties: false,
+        },
+      });
+      return Response.json({ candidates: [{ finishReason, content: { parts: [{ text: JSON.stringify(output) }] } }] });
+    });
+    mockFetch.mockImplementation((resource, options) =>
+      String(resource).startsWith("https://generativelanguage.googleapis.com/")
+        ? gemini(resource, options)
+        : fallback!(resource, options));
+    const response = await post(dilutionBenchmark);
+    expect(response.status).toBe(201);
+    const receipt = await response.json();
+
+    await scheduled();
+    expect(gemini).toHaveBeenCalledOnce();
+    const path = "requests/" + receipt.id;
+    const detail = await (await adminCall(path)).json();
+    expect(detail.run).toMatchObject({
+      status: accepted ? "completed" : "failed", provider: "gemini", model: "gemini-test",
+      failureCode: accepted ? null : "AI_UNAVAILABLE_OR_INVALID",
+    });
+    expect(detail.report.calculation.status).toBe("calculated");
+    expect(detail.report.calculation.result.analyticalMolPerL).toBeCloseTo(0.102, 14);
+    expect(detail.report.calculation.references[0]).toMatchObject({
+      title: "OpenStax Chemistry 2e, 3.3 Molarity", checkedOn: "2026-11-25",
+    });
+    expect(detail.report.calculationExplanation).toEqual(accepted ? output : undefined);
+    expect(await (await track(receipt)).json()).toEqual({
+      id: receipt.id, status: "Pending Review", createdAt: receipt.createdAt, updatedAt: expect.any(String),
+    });
+
+    if (accepted) {
+      const decision = await adminCall(path + "/decision", {
+        runId: detail.run.id, decision: "Approved", notes: approvalNotes,
+        result: {
+          classification: "Insufficient information", conditions: "Documented dilution conditions",
+          hazards: [], incompatibilities: [], storage: "Not assessed", container: "Not assessed",
+          limitations: ["Compatibility requires separate evidence"], evidenceIds: [],
+          externalSources: detail.report.calculation.references.slice(0, 1).map(
+            ({ title, url }: { title: string; url: string }) => ({ title, url }),
+          ),
+          attestation: true,
+        },
+      });
+      expect(decision.status).toBe(200);
+      const published = await (await track(receipt)).json();
+      expect(published.status).toBe("Approved");
+      expect(published.result).toMatchObject({ conditions: "Documented dilution conditions" });
+      expect(JSON.stringify(published)).not.toMatch(/calculation|soluteBalance|0\.102/);
+    }
   });
 
   it("runs the agent once, keeps evidence private, and publishes only the human decision to its token owner", async () => {

@@ -1,4 +1,5 @@
 import type { AdminRequestDetail, Evidence, GapCode } from "../../src/review";
+import CalculationReport from "./CalculationReport";
 import type { AdminTextKey } from "./i18n";
 import { useAdminText as useText } from "./text";
 import { Notice } from "../../src/ui";
@@ -49,6 +50,7 @@ export function AgentReport({ request }: { request: AdminRequestDetail }) {
       {report && (
         <>
           <Notice kind="warning">{t("preliminaryCaution")}</Notice>
+          {report.calculation && <CalculationReport report={report.calculation} explanation={report.calculationExplanation} />}
           <div className="admin-grid">
             <section>
               <h3>{t("catalogMatches")}</h3>
