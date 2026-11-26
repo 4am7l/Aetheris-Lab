@@ -15,18 +15,25 @@ const compoundSchema = z.object({
 type Compound = z.infer<typeof compoundSchema>;
 type Citation = Pick<Evidence, "source" | "kind" | "title" | "url" | "excerpt">;
 
+class SourceFailure extends Error {
+  constructor(readonly code: string, readonly httpStatus?: number) {
+    super(code);
+  }
+}
+
 async function retrieve(url: string, maxBytes: number) {
-  const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(8_000) });
+  const signal = AbortSignal.timeout(8_000);
+  const response = await fetch(url, { redirect: "manual", signal }).catch(() => {
+    throw new SourceFailure(signal.aborted ? "TIMEOUT" : "NETWORK_ERROR");
+  });
+  if (!response.ok) void response.body?.cancel().catch(() => {});
   if (response.status === 404) {
-    await response.body?.cancel();
     return null;
   }
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error("SOURCE_UNAVAILABLE");
-  }
+  if (!response.ok) throw new SourceFailure("HTTP_ERROR", response.status);
   const bytes = await readBytes(response, maxBytes);
-  if (bytes instanceof Response) throw new Error("SOURCE_UNAVAILABLE");
+  if (signal.aborted) throw new SourceFailure("TIMEOUT");
+  if (bytes instanceof Response) throw new SourceFailure("INVALID_BODY", response.status);
   return new TextDecoder().decode(bytes);
 }
 
@@ -97,6 +104,7 @@ const annotations = z.object({
   TOCHeading: z.string(),
   Information: z.array(z.object({
     Name: z.string().optional(),
+    ReferenceNumber: z.int().optional(),
     Value: z.object({ StringWithMarkup: z.array(z.object({ String: z.string() })).optional() }).optional(),
   })).optional(),
   Section: z.array(z.unknown()).optional(),
@@ -161,7 +169,7 @@ function indexEntries(html: string) {
     const normalized = htmlText(key).toLowerCase();
     items.set(normalized, [...(items.get(normalized) ?? []), { title: htmlText(title), page }]);
   }
-  if (!items.size) throw new Error("NIOSH_INDEX_FORMAT_CHANGED");
+  if (!items.size) throw new SourceFailure("INDEX_FORMAT_CHANGED");
   return items;
 }
 
@@ -189,44 +197,132 @@ async function compoundCas(cid: number) {
   return numbers.size === 1 ? [...numbers][0] : unknown;
 }
 
-async function nioshSafety(cas: string, loadIndex: () => Promise<ReturnType<typeof indexEntries>>): Promise<Citation[]> {
-  if (cas === unknown) return [];
-  const entries = (await loadIndex()).get(cas) ?? [];
-  const matches = [...new Map(entries.map((entry) => [entry.page, entry])).values()];
-  if (matches.length !== 1) return [];
-  const { page, title } = matches[0];
+const nioshFields = new Map<string, Citation["kind"]>([
+  ["Incompatibilities & Reactivities", "incompatibility"],
+  ["Symptoms", "hazard"], ["Exposure Routes", "hazard"], ["Target Organs", "hazard"], ["Flash Point", "hazard"],
+  ["Physical Description", "identity"], ["Boiling Point", "identity"], ["Freezing Point", "identity"],
+  ["Solubility", "identity"], ["Vapor Pressure", "identity"], ["Specific Gravity", "identity"],
+  ["Melting Point", "identity"], ["Density", "identity"],
+]);
+
+function nioshCitation(title: string, url: string, heading: string, value: string): Citation | undefined {
+  const kind = nioshFields.get(heading);
+  const excerpt = value.replace(/\s+/g, " ").trim().slice(0, 900);
+  if (kind && excerpt && !/^(?:none|not available|n\.d\.|\?)$/i.test(excerpt)) {
+    return { source: "NIOSH", kind, title: title + " · " + heading, url, excerpt };
+  }
+}
+
+async function nioshProfile(cas: string, { page, title }: { page: string; title: string }): Promise<Citation[]> {
   const url = cdc + page;
   const html = await retrieve(url, 768 * 1024);
-  if (!html) return [];
+  if (html === null) throw new SourceFailure("HTTP_ERROR", 404);
 
   const fields = new Map<string, string>();
-  const cards = /<div class="card-title h6">([\s\S]{1,300}?)<\/div>\s*<div class="card-body">\s*<div class="card-text">([\s\S]{0,4000}?)<\/div>/gi;
+  const cards = /<div\s+class=["']card-title h6["']>([\s\S]{1,300}?)<\/div>\s*<div\s+class=["']card-body["']>\s*<div\s+class=["']card-text["']>([\s\S]{0,4000}?)<\/div>/gi;
   for (const [, heading, body] of html.matchAll(cards)) {
-    fields.set(htmlText(heading), htmlText(body).slice(0, 900));
+    fields.set(htmlText(heading), htmlText(body));
   }
-  if (!fields.size) throw new Error("NIOSH_RECORD_FORMAT_CHANGED");
+  if (!fields.has("CAS No.")) throw new SourceFailure("PROFILE_FORMAT_CHANGED");
   if (fields.get("CAS No.") !== cas) return [];
 
   const evidence: Citation[] = [{ source: "NIOSH", kind: "identity", title, url, excerpt: "CAS " + cas }];
-  for (const [heading, kind] of [
-    ["Incompatibilities & Reactivities", "incompatibility"],
-    ["Symptoms", "hazard"], ["Exposure Routes", "hazard"], ["Target Organs", "hazard"], ["Flash Point", "hazard"],
-    ["Physical Description", "identity"], ["Boiling Point", "identity"], ["Freezing Point", "identity"],
-    ["Solubility", "identity"], ["Vapor Pressure", "identity"], ["Specific Gravity", "identity"],
-  ] as const) {
-    const excerpt = fields.get(heading);
-    if (excerpt && !/^(?:none|not available|n\.d\.|\?)$/i.test(excerpt)) {
-      evidence.push({ source: "NIOSH", kind, title: title + " · " + heading, url, excerpt });
-    }
+  for (const [heading, value] of fields) {
+    const citation = nioshCitation(title, url, heading, value);
+    if (citation) evidence.push(citation);
   }
   return evidence;
 }
 
-export function scientificSources() {
-  // Reuse each index across both solutions within this invocation.
+async function nioshDeposits({ CID, Title }: Compound): Promise<Citation[]> {
+  // PubChem publishes annotations deposited by NIOSH and identifies their original references.
+  const data = await retrieve(pubchem + "/rest/pug_view/data/compound/" + CID + "/JSON", 4 * 1024 * 1024);
+  if (data === null) return [];
+  const schema = z.object({ Record: z.object({
+    RecordNumber: z.literal(CID),
+    Reference: z.array(z.object({
+      ReferenceNumber: z.int(), SourceName: z.string().optional(), URL: z.string().optional(),
+    })),
+    Section: z.array(z.unknown()),
+  }) });
+  const record = schema.parse(JSON.parse(data)).Record;
+  const profiles = new Map<number, string>();
+  for (const { ReferenceNumber, SourceName, URL } of record.Reference) {
+    if (SourceName === "The National Institute for Occupational Safety and Health (NIOSH)" &&
+      URL && /^https:\/\/www\.cdc\.gov\/niosh\/npg\/npgd\d{4}\.html$/.test(URL)) {
+      profiles.set(ReferenceNumber, URL);
+    }
+  }
+  if (new Set(profiles.values()).size !== 1) return [];
+
+  const evidence = new Map<string, Citation>();
+  function visit(raw: unknown, depth: number) {
+    const parsed = annotations.safeParse(raw);
+    if (!parsed.success || depth > 8) return;
+    const { TOCHeading, Information, Section } = parsed.data;
+    const heading = TOCHeading === "Signs and Symptoms" ? "Symptoms"
+      : TOCHeading === "Hazardous Reactivities and Incompatibilities" ? "Incompatibilities & Reactivities" : TOCHeading;
+    for (const item of Information ?? []) {
+      const url = profiles.get(item.ReferenceNumber ?? -1);
+      if (!url) continue;
+      for (const { String: value } of item.Value?.StringWithMarkup ?? []) {
+        const citation = nioshCitation(Title, url, heading, value);
+        if (citation && !evidence.has(heading)) evidence.set(heading, citation);
+      }
+    }
+    for (const child of Section ?? []) visit(child, depth + 1);
+  }
+  for (const section of record.Section) visit(section, 0);
+  return [...evidence.values()];
+}
+
+export function scientificSources(runId: string) {
+  // Share lookups across both solutions during this run.
   let index: Promise<ReturnType<typeof indexEntries>> | undefined;
+  const profiles = new Map<string, Promise<Citation[]>>();
+  const deposits = new Map<number, Promise<Citation[]>>();
   function loadIndex() {
-    return index ??= retrieve(cdc + "npgdcas.html", 1024 * 1024).then((html) => indexEntries(html ?? ""));
+    return index ??= retrieve(cdc + "npgdcas.html", 1024 * 1024).then((html) => {
+      if (html === null) throw new SourceFailure("HTTP_ERROR", 404);
+      return indexEntries(html);
+    });
+  }
+  async function collectNiosh(cas: string, chemical: Compound | undefined, solution: SolutionSide) {
+    if (cas === unknown) return [];
+    let stage = "cdc_index";
+    function log(cause: unknown) {
+      const error = cause instanceof SourceFailure ? cause : new SourceFailure("INVALID_RESPONSE");
+      console.warn({ event: "niosh_lookup_failed", runId, solution, stage, code: error.code, httpStatus: error.httpStatus });
+    }
+    try {
+      const entries = (await loadIndex()).get(cas) ?? [];
+      const matches = [...new Map(entries.map((entry) => [entry.page, entry])).values()];
+      if (matches.length !== 1) return [];
+      stage = "cdc_profile";
+      let profile = profiles.get(cas);
+      if (!profile) {
+        profile = nioshProfile(cas, matches[0]);
+        profiles.set(cas, profile);
+      }
+      return await profile;
+    } catch (cause) {
+      log(cause);
+      if (chemical) {
+        stage = "pubchem_annotations";
+        try {
+          let fallback = deposits.get(chemical.CID);
+          if (!fallback) {
+            fallback = nioshDeposits(chemical);
+            deposits.set(chemical.CID, fallback);
+          }
+          const evidence = await fallback;
+          if (evidence.length) return evidence;
+        } catch (fallbackCause) {
+          log(fallbackCause);
+        }
+      }
+      throw cause;
+    }
   }
   return async function collect(solution: Solution, side: SolutionSide) {
     const gaps: EvidenceGap[] = [];
@@ -272,7 +368,7 @@ export function scientificSources() {
     }
     if (identity.state !== "matched") add("identity");
     try {
-      const references = await nioshSafety(cas, loadIndex);
+      const references = await collectNiosh(cas, chemical, side);
       if (!references.length) add("nioshNoRecord");
       for (const citation of references) cite(citation);
     } catch {
