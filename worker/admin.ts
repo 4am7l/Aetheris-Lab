@@ -4,9 +4,10 @@ import {
   type PublicRequestStatus,
 } from "../src/domain";
 import {
-  adminManageSchema, retryInputSchema, reviewInputSchema, scientificReferences, type AdminRequestDetail, type AdminRequestList,
+  adminManageSchema, needsWasteReview, retryInputSchema, reviewInputSchema, scientificReferences, type AdminRequestDetail, type AdminRequestList,
   type Evidence, type PreliminaryReport, type ReviewDecision,
 } from "../src/review";
+import { supportedWasteSelection, type ReviewedWasteAssessment } from "../src/wasteAssessment";
 import type { Env } from "./index";
 import { providerFor } from "./ai";
 import { error, json, readJson } from "./http";
@@ -65,6 +66,18 @@ async function manage(request: Request, env: Env, reviewer: string) {
 }
 
 const evidenceColumns = `id, source, kind, solution, title, url, excerpt, retrieved_at AS retrievedAt`;
+
+function uniqueSources(sources: { title: string; url: string }[]) {
+  return [...new Map(sources.map((source) => [source.url, source])).values()];
+}
+
+function citedSources(ids: string[], references: ReturnType<typeof scientificReferences>) {
+  if (ids.some((id) => !references.has(id))) return null;
+  return [...new Set(ids)].map((id) => {
+    const { title, url } = references.get(id)!;
+    return { title, url };
+  });
+}
 
 async function detail(env: Env, id: string) {
   const [rows, evidenceRows, imageRows, historyRows] = await env.DB.batch([
@@ -125,42 +138,54 @@ async function decide(request: Request, env: Env, requestId: string, reviewer: s
   const createdAt = new Date().toISOString();
   let approvedResult: string | null = null;
   if (review.decision === "Approved") {
-    const { evidenceIds, externalSources, scientificSections, attestation, ...authored } = review.result;
+    const { evidenceIds, externalSources, scientificSections, wasteAssessment, attestation, ...authored } = review.result;
     if (!attestation) return error("INVALID_REVIEW", 400);
     const { results } = await env.DB.prepare(
       `SELECT e.id, e.title, e.url, e.solution FROM public_assessment_evidence e
        JOIN public_agent_runs a ON a.id = e.run_id WHERE a.request_id = ? AND e.run_id = ?`,
     ).bind(requestId, review.runId).all<Pick<Evidence, "id" | "title" | "url" | "solution">>();
-    const byId = new Map(results.map(({ id, title, url }) => [id, { title, url }]));
-    const selected = evidenceIds.map((id) => byId.get(id));
-    if (selected.some((source) => !source)) return error("INVALID_EVIDENCE", 400);
+    const selected = citedSources(evidenceIds, scientificReferences(results));
+    if (!selected) return error("INVALID_EVIDENCE", 400);
     if (authored.classification === "Compatible under documented conditions" && !externalSources.length) {
       return error("MIXTURE_EVIDENCE_REQUIRED", 400);
     }
-    const sources = [...new Map(
-      [...selected.filter((source) => source !== undefined), ...externalSources].map((source) => [source.url, source]),
-    ).values()];
+    const sources = uniqueSources([...selected, ...externalSources]);
+    const draftRow = await env.DB.prepare(
+      `SELECT r.input_json, d.report_json FROM public_agent_runs a
+       JOIN public_requests r ON r.id = a.request_id
+       LEFT JOIN public_assessment_drafts d ON d.run_id = a.id
+       WHERE a.request_id = ? AND a.id = ?`,
+    ).bind(requestId, review.runId).first<{ input_json: string; report_json: string | null }>();
+    const submission = draftRow && publicInputSchema.parse(JSON.parse(draftRow.input_json));
+    const draft = draftRow?.report_json ? JSON.parse(draftRow.report_json) as PreliminaryReport : undefined;
+    const references = scientificReferences(results, draft?.calculation);
+    if (!wasteAssessment && needsWasteReview(submission ?? undefined, draft)) return error("WASTE_REVIEW_REQUIRED", 400);
+
     let scientificReport;
     if (scientificSections) {
-      const draft = await env.DB.prepare(
-        `SELECT d.report_json FROM public_assessment_drafts d
-         JOIN public_agent_runs a ON a.id = d.run_id WHERE a.request_id = ? AND a.id = ?`,
-      ).bind(requestId, review.runId).first<{ report_json: string }>();
-      const report = draft ? JSON.parse(draft.report_json) as PreliminaryReport : undefined;
-      const references = scientificReferences(results, report?.calculation);
-      if (scientificSections.some(({ referenceIds }) => referenceIds.some((id) => !references.has(id)))) {
-        return error("INVALID_EVIDENCE", 400);
+      scientificReport = [];
+      for (const { referenceIds, ...section } of scientificSections) {
+        const entries = citedSources(referenceIds, references);
+        if (!entries) return error("INVALID_EVIDENCE", 400);
+        scientificReport.push({ ...section, sources: uniqueSources(entries) });
       }
-      scientificReport = scientificSections.map(({ referenceIds, ...section }) => {
-        const entries = [...new Set(referenceIds)].map((id) => {
-          const { title, url } = references.get(id)!;
-          return { title, url };
-        });
-        return { ...section, sources: [...new Map(entries.map((entry) => [entry.url, entry])).values()] };
-      });
+    }
+    let reviewedWaste: ReviewedWasteAssessment | undefined;
+    if (wasteAssessment) {
+      const { referenceIds, mixtureSources, attestation: wasteVerified, ...section } = wasteAssessment;
+      const entries = citedSources(referenceIds, references);
+      if (!entries) return error("INVALID_EVIDENCE", 400);
+      const knownUrls = new Set([...references.values()].map(({ url }) => url));
+      if (!supportedWasteSelection(section.classifications, referenceIds, draft?.wasteAssessment) &&
+        !mixtureSources.some(({ url }) => !knownUrls.has(url))) {
+        return error("WASTE_MIXTURE_EVIDENCE_REQUIRED", 400);
+      }
+      if (!wasteVerified) return error("WASTE_REVIEW_REQUIRED", 400);
+      reviewedWaste = { ...section, sources: uniqueSources([...entries, ...mixtureSources]) };
     }
     const validated = finalResultSchema.safeParse({
-      ...authored, sources, scientificReport, reviewerId: reviewer, reviewedAt: createdAt, decision: "approved",
+      ...authored, sources, scientificReport, wasteAssessment: reviewedWaste,
+      reviewerId: reviewer, reviewedAt: createdAt, decision: "approved",
     });
     if (!validated.success) return error("INVALID_REVIEW", 400);
     approvedResult = JSON.stringify(validated.data);

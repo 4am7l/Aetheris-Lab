@@ -879,6 +879,7 @@ footer {
   font-size: 0.875rem;
   color: var(--ink);
   margin-top: 5px;
+  overflow-wrap: anywhere;
 }
 .chemical-summary > p {
   margin-bottom: 14px;
@@ -986,6 +987,18 @@ footer {
 }
 .wide {
   grid-column: 1/-1;
+}
+.chemical-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  margin-block-end: 8px;
+}
+.chemical-choices .MuiFormControlLabel-root {
+  margin-inline: 0;
+}
+.waste-assessment {
+  margin-block: 24px;
+  overflow-wrap: anywhere;
 }
 .unknown-field {
   position: relative;

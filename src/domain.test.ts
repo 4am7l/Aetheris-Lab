@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   blankSolution,
+  publicInputSchema,
+  publicSolutionSchema,
   solutionSchema,
+  solventOptions,
   validCas,
   validateImage,
   localRequestSchema,
@@ -45,6 +48,50 @@ describe("structured validation", () => {
       expect(searchChemicals(q)[0]?.id).toBe("ethanol");
     expect(searchChemicals("", "Acids")).toEqual([]);
     expect(searchChemicals("fictionalium")).toEqual([]);
+  });
+});
+
+describe("pre-mixing solution declarations", () => {
+  it.each(solventOptions)("accepts declared, unknown and inapplicable pH for %s", (solvent) => {
+    for (const ph of ["6.25", "-1.25", "15.75", "Unknown", "Not Applicable"]) {
+      expect(publicSolutionSchema.parse({ ...solution, solvent, ph })).toMatchObject({ solvent, ph });
+    }
+  });
+
+  it.each(["Pure", "Neat"])("accepts separate purity and concentration for %s", (solvent) => {
+    for (const purity of [undefined, "Unknown", "0", "95", "98.5", "99.99", "100"]) {
+      expect(publicSolutionSchema.parse({ ...solution, solvent, purity, concentration: "43.2", unit: "% w/w" }))
+        .toMatchObject({ solvent, purity, concentration: "43.2", unit: "% w/w" });
+    }
+    for (const purity of ["-0.01", "100.01", "0x20", "Infinity", "100%", ""]) {
+      expect(publicSolutionSchema.safeParse({ ...solution, solvent, purity }).success).toBe(false);
+    }
+  });
+
+  it("accepts Arabic decimal digits without manufacturing a numerical pH or purity", () => {
+    expect(publicSolutionSchema.parse({ ...solution, solvent: "Neat", purity: "٩٨٫٥", ph: "−۰٫۲۵" }))
+      .toMatchObject({ purity: "98.5", ph: "-0.25" });
+    for (const ph of ["", "NaN", "pH 5", "0x9", "1e9999"]) {
+      expect(publicSolutionSchema.safeParse({ ...solution, ph }).success).toBe(false);
+    }
+  });
+
+  it("retains independent custom classifications, solvent names, and legacy free-text solvent values", () => {
+    const a = { ...solution, solvent: "Other", customSolvent: " Propylene carbonate ", ph: "Not Applicable",
+      classifications: ["Organic", "Other"], customClassification: " Carbonate " };
+    const b = { ...solution, solvent: "Distilled water", ph: "5.9", classifications: ["Inorganic", "Salt"] };
+    expect(publicInputSchema.parse({ a, b, conditions: "" })).toEqual({
+      a: { ...a, customSolvent: "Propylene carbonate", customClassification: "Carbonate" }, b, conditions: "",
+    });
+    expect(publicSolutionSchema.parse({ ...solution, solvent: "Other" })).not.toHaveProperty("customSolvent");
+  });
+
+  it("rejects hidden-field mismatches, invalid categories and client-supplied waste results", () => {
+    for (const patch of [{ purity: "99.9" }, { customSolvent: "Water" }, { customClassification: "Custom" },
+      { classifications: ["Organic", "Organic"] }, { classifications: ["Acidic waste"] }]) {
+      expect(publicSolutionSchema.safeParse({ ...solution, ...patch }).success).toBe(false);
+    }
+    expect(publicInputSchema.safeParse({ a: solution, b: solution, conditions: "", wasteAssessment: {} }).success).toBe(false);
   });
 });
 describe("local draft and archived data", () => {

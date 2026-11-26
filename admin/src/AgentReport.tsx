@@ -1,9 +1,11 @@
-import type { AdminRequestDetail, Evidence, GapCode } from "../../src/review";
+import { scientificReferences, type AdminRequestDetail, type Evidence, type GapCode } from "../../src/review";
+import { WasteAssessmentSection } from "../../src/components/WasteAssessmentSection";
 import CalculationReport from "./CalculationReport";
 import { ScientificAssessment } from "./ScientificAssessment";
 import type { AdminTextKey } from "./i18n";
 import { useAdminText as useText } from "./text";
 import { Notice } from "../../src/ui";
+import { prepareWasteReview } from "./wasteText";
 
 const gapLabels: Record<GapCode, AdminTextKey> = {
   identity: "identityMissing",
@@ -33,6 +35,13 @@ function EvidenceLink({ evidence }: { evidence: Evidence }) {
 export function AgentReport({ request }: { request: AdminRequestDetail }) {
   const t = useText();
   const { run, report, evidence } = request;
+  const waste = report?.wasteAssessment && prepareWasteReview(request);
+  const references = scientificReferences(evidence, report?.calculation);
+  const wasteSources = new Map<string, { title: string; url: string }>();
+  for (const id of waste?.referenceIds ?? []) {
+    const source = references.get(id);
+    if (source) wasteSources.set(source.url, { title: source.title, url: source.url });
+  }
   const byId = new Map(evidence.map((item) => [item.id, item]));
   const sections = report?.assessment && [
     ["agentHazards", report.assessment.hazardEvidenceIds],
@@ -54,6 +63,7 @@ export function AgentReport({ request }: { request: AdminRequestDetail }) {
         <>
           <Notice kind="warning">{t("preliminaryCaution")}</Notice>
           <ScientificAssessment request={request} />
+          {waste && <WasteAssessmentSection assessment={{ ...waste, sources: [...wasteSources.values()] }} />}
           {report.calculation && <CalculationReport report={report.calculation} explanation={report.calculationExplanation} />}
           <div className="admin-grid">
             <section>

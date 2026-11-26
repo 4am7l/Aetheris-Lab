@@ -53,12 +53,26 @@ describe("aqueous methanol dilution", () => {
     });
   });
 
+  it("keeps legacy water aliases and treats a named custom water solvent equivalently", () => {
+    const expected = calculate(publicInputSchema.parse(benchmark));
+    for (const a of [
+      { ...benchmark.a, solvent: "Distilled water" },
+      { ...benchmark.a, solvent: "Other", customSolvent: "Distilled water", ph: "6.8" },
+    ]) {
+      expect(calculate(publicInputSchema.parse({ ...benchmark, a }))).toEqual(expected);
+    }
+    expect(calculate(publicInputSchema.parse({ ...benchmark, a: { ...benchmark.a, solvent: "Unknown" } })))
+      .toEqual({ status: "needs-information", reasons: [{ code: "solventMissing", side: "A" }] });
+  });
+
   it.each([
     [{ name: "Ethanol" }, {}, {}, "identityUnsupported"],
     [{ cas: "64-17-5" }, {}, {}, "identityUnsupported"],
     [{ formula: "C2H6O" }, {}, {}, "identityUnsupported"],
     [{}, { name: "Brine" }, {}, "identityUnsupported"],
     [{ solvent: "Ethanol" }, {}, {}, "solventUnsupported"],
+    [{ solvent: "Pure", purity: "Unknown" }, {}, {}, "solventUnsupported"],
+    [{ solvent: "Neat", purity: "99.99" }, {}, {}, "solventUnsupported"],
     [{ state: "Gas" }, {}, {}, "stateUnsupported"],
     [{}, { temperature: "26" }, {}, "temperatureUnsupported"],
     [{ unit: "g/L" }, {}, {}, "stockConcentrationUnsupported"],

@@ -11,6 +11,8 @@ The administrator chooses the password directly in the Cloudflare Dashboard as t
 
 Approval publishes the reviewer-authored assessment and its selected references to the corresponding token holder. Rejection and requests for more information publish only status. Private notes, staff identities, submitted photos, evidence excerpts, and draft findings remain in the review area.
 
+For a new waste assessment, check the separately submitted solvent, purity, pH, and chemical classifications for both solutions. Verify the reference identities, the proposed mixture and the scope of any calculations. In **Chemical Waste Assessment**, edit the classifications and both language versions of the justification, hazards, uncertainty and missing information. Use the selected current-run evidence and method citations for supported categories, or add a verified reference covering the specific mixture and conditions. Choose **Undetermined** when the evidence is insufficient. Check the waste verification checkbox and the overall review attestation before approving. Legacy drafts without a waste assessment continue through the existing review flow.
+
 ## Managing records
 
 Use **Manage records** in the queue to select up to 30 requests for one action. To manage just one request, open its details and use the actions there.

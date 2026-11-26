@@ -1,19 +1,28 @@
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
 import Button from "@mui/material/Button";
-import { useText } from "../text";
+import Checkbox from "@mui/material/Checkbox";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import { useLanguage, useText } from "../text";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   blankSolution,
+  chemicalClassifications,
+  hasPurity,
+  notApplicable,
   publicSolutionSchema,
+  solventOption,
+  solventOptions,
   unknown,
   validateImage,
   type Solution,
 } from "../domain";
+import { classificationLabels, solventLabels, submittedSolutionFields } from "../chemistryLabels";
 import { catalog } from "../services/local";
 import { Icon, Modal, Notice } from "../ui";
 type Method = "manual" | "search" | "camera" | null;
+type TextFieldKey = "name" | "formula" | "cas" | "concentration" | "temperature" | "quantity";
 export interface ImageAttachment {
   file: File;
   url: string;
@@ -34,6 +43,7 @@ export function SolutionCard({
   initialMethod?: string | null;
 }) {
   const t = useText();
+  const language = useLanguage();
   const [method, setMethod] = useState<Method>(
     initialMethod === "camera"
       ? "camera"
@@ -51,7 +61,7 @@ export function SolutionCard({
     queryFn: () => catalog.search(query),
     enabled: method === "search",
   });
-  const update = (key: keyof Solution, v: string) =>
+  const update = <K extends keyof Solution,>(key: K, v: Solution[K]) =>
     setForm((f) => ({
       ...f,
       [key]: v,
@@ -79,7 +89,12 @@ export function SolutionCard({
   }
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    const parsed = publicSolutionSchema.safeParse(form);
+    const parsed = publicSolutionSchema.safeParse({
+      ...form,
+      ph: form.ph ?? unknown,
+      purity: hasPurity(form.solvent) ? form.purity?.trim() || unknown : undefined,
+      customClassification: form.customClassification?.trim() || undefined,
+    });
     if (!parsed.success) {
       setErrors(
         Object.fromEntries(
@@ -91,7 +106,7 @@ export function SolutionCard({
     onChange(parsed.data);
     setMethod(null);
   }
-  const field = (key: keyof Solution, label: string, numeric = false) => (
+  const field = (key: TextFieldKey, label: string, numeric = false) => (
     <TextField
       key={key}
       id={"input-" + letter + "-" + key}
@@ -125,17 +140,17 @@ export function SolutionCard({
       }}
     />
   );
-  const selection = (
-    key: "unit" | "state" | "quantityUnit",
+  const selection = <K extends "unit" | "state" | "quantityUnit",>(
+    key: K,
     label: string,
-    options: string[],
+    options: Solution[K][],
   ) => (
     <TextField
       fullWidth
       select
       label={label}
       value={form[key]}
-      onChange={(e) => update(key, e.target.value)}
+      onChange={(e) => update(key, e.target.value as Solution[K])}
       error={!!errors[key]}
       helperText={errors[key]}
       slotProps={{ select: { native: true } }}
@@ -147,6 +162,10 @@ export function SolutionCard({
       ))}
     </TextField>
   );
+  const selectedSolvent = solventOption(form.solvent);
+  const customSolvent = form.solvent === "Other" ? form.customSolvent ?? "" : form.solvent;
+  const phStatus = form.ph === notApplicable ? notApplicable
+    : form.ph === undefined || form.ph === unknown ? unknown : "manual";
   return (
     <>
       <section className={`solution-card ${value ? "filled" : ""}`}>
@@ -213,6 +232,9 @@ export function SolutionCard({
                 {t("identifySource")}
                 <strong>{value.source}</strong>
               </span>
+              {submittedSolutionFields(value, language).map(([key, text]) => (
+                <span key={key}>{t(key)}<strong dir="auto">{text}</strong></span>
+              ))}
             </div>
             <p className="small muted">{t("confidence")}</p>
             <button className="button subtle full" onClick={manual}>
@@ -355,7 +377,34 @@ export function SolutionCard({
                 "mol/L",
                 "g/L",
               ])}
-              {field("solvent", t("solvent"))}
+              <TextField id={`input-${letter}-solvent`} fullWidth select label={t("solvent")}
+                value={selectedSolvent} slotProps={{ select: { native: true } }}
+                onChange={(event) => setForm((current) => ({
+                  ...current, solvent: event.target.value, customSolvent: undefined, purity: undefined,
+                }))}>
+                {solventOptions.map((option) => <option key={option} value={option}>{solventLabels[option][language]}</option>)}
+              </TextField>
+              {selectedSolvent === "Other" && <TextField id={`input-${letter}-custom-solvent`} fullWidth required
+                label={t("customSolvent")} value={customSolvent} error={Boolean(errors.customSolvent)}
+                slotProps={{ htmlInput: { maxLength: 200, dir: "auto" } }}
+                onChange={(event) => setForm((current) => ({ ...current, solvent: "Other", customSolvent: event.target.value }))} />}
+              {hasPurity(selectedSolvent) && <TextField id={`input-${letter}-purity`} fullWidth
+                label={t("purity")} value={form.purity === unknown ? "" : form.purity ?? ""} placeholder={t("unknown")}
+                error={Boolean(errors.purity)} helperText={t(errors.purity ? "purityInvalid" : "purityHint")}
+                slotProps={{ htmlInput: { inputMode: "decimal", maxLength: 64 } }}
+                onChange={(event) => update("purity", event.target.value)} />}
+              <TextField id={`input-${letter}-ph-status`} fullWidth select label={t("phStatus")}
+                value={phStatus} helperText={t("phHint")} slotProps={{ select: { native: true } }}
+                onChange={(event) => update("ph", event.target.value === "manual" ? "" : event.target.value)}>
+                <option value={unknown}>{t("unknown")}</option>
+                <option value={notApplicable}>{t("notApplicable")}</option>
+                <option value="manual">{t("enterPh")}</option>
+              </TextField>
+              {phStatus === "manual" && <TextField id={`input-${letter}-ph`} fullWidth required
+                label={t("preMixingPh")} value={form.ph} error={Boolean(errors.ph)}
+                helperText={errors.ph && t("phInvalid")}
+                slotProps={{ htmlInput: { inputMode: "decimal", maxLength: 64 } }}
+                onChange={(event) => update("ph", event.target.value)} />}
               {selection("state", t("state"), [
                 "Unknown",
                 "Liquid",
@@ -371,6 +420,26 @@ export function SolutionCard({
                 "g",
                 "kg",
               ])}
+              <fieldset className="wide request-fields" aria-describedby={`classifications-${letter}-hint`}>
+                <legend>{t("chemicalClassification")}</legend>
+                <p id={`classifications-${letter}-hint`} className="small muted">{t("classificationHint")}</p>
+                <div className="chemical-choices">
+                  {chemicalClassifications.map((classification) => (
+                    <FormControlLabel key={classification} label={classificationLabels[classification][language]}
+                      control={<Checkbox size="small" checked={form.classifications?.includes(classification) ?? false}
+                        onChange={(_, checked) => setForm((current) => ({
+                          ...current,
+                          classifications: checked ? [...(current.classifications ?? []), classification]
+                            : current.classifications?.filter((item) => item !== classification),
+                          customClassification: !checked && classification === "Other" ? undefined : current.customClassification,
+                        }))} />} />
+                  ))}
+                </div>
+                {form.classifications?.includes("Other") && <TextField id={`input-${letter}-custom-classification`} fullWidth
+                  label={t("customClassification")} value={form.customClassification ?? ""}
+                  slotProps={{ htmlInput: { maxLength: 200, dir: "auto" } }}
+                  onChange={(event) => update("customClassification", event.target.value)} />}
+              </fieldset>
               <TextField
                 className="wide"
                 label={t("notes")}

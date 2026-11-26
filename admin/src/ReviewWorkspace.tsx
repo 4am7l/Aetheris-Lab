@@ -11,11 +11,13 @@ import PageHeading from "../../src/components/PageHeading";
 import { ReviewForm } from "./ReviewForm";
 import { RequestManagement } from "./RequestManagement";
 import { publicRequestStatuses, type PublicRequestStatus, type Solution } from "../../src/domain";
+import { submittedSolutionFields } from "../../src/chemistryLabels";
 import { adminManageLimit } from "../../src/review";
 import { statusLabel } from "../../src/reviewText";
 import { adminAction, adminDetail, AdminError, adminImage, adminList, sessionQueryKey } from "./api";
 import { useAdminText as useText } from "./text";
 import { Icon, Notice } from "../../src/ui";
+import { useLanguage } from "../../src/text";
 
 function DateLabel({ value }: { value: string }) {
   return <time dateTime={value}>{new Date(value).toLocaleString(document.documentElement.lang || undefined)}</time>;
@@ -126,12 +128,13 @@ function ReviewQueue({ csrfToken }: { csrfToken: string }) {
 }
 
 const solutionFields = [
-  "name", "formula", "cas", "concentration", "unit", "solvent",
+  "name", "formula", "cas", "concentration", "unit",
   "state", "temperature", "quantity", "quantityUnit", "notes",
 ] as const;
 
 function SubmittedSolution({ side, data }: { side: "A" | "B"; data: Solution }) {
   const t = useText();
+  const language = useLanguage();
   return (
     <section>
       <h3>{t("solution")} {side}</h3>
@@ -141,6 +144,9 @@ function SubmittedSolution({ side, data }: { side: "A" | "B"; data: Solution }) 
             <dt>{t(field)}</dt>
             <dd dir="auto">{data[field] === "Unknown" ? t("unknown") : data[field] || "—"}</dd>
           </div>
+        ))}
+        {submittedSolutionFields(data, language).map(([key, value]) => (
+          <div key={key}><dt>{t(key)}</dt><dd dir="auto">{value}</dd></div>
         ))}
         <div>
           <dt>{t("submittedSource")}</dt>

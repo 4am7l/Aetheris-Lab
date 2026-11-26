@@ -93,10 +93,17 @@ it("queues a failed assessment for the same request and shows the retry confirma
   expect(screen.queryByRole("button", { name: adminText("retryAgent") })).toBeNull();
 });
 
-it("loads the private assessment and submits a corrected bilingual section for approval", async () => {
+it("reviews independent declarations and submits corrected bilingual scientific and waste assessments", async () => {
+  const evidenceId = "cd682442-bf0c-4d70-a803-5259ed9d0d83";
   const request: AdminRequestDetail = {
     ...detail("first"),
     status: "Pending Review",
+    input: {
+      a: { ...blankSolution, name: "Sample A", solvent: "Neat", purity: "98.5", ph: "Not Applicable", classifications: ["Organic", "Alcohol"] },
+      b: { ...blankSolution, name: "Sample B", solvent: "Pure", purity: "Unknown", ph: "-0.4", classifications: ["Salt", "Other"],
+        customClassification: "Custom class" },
+      conditions: "",
+    },
     images: [{ id: "photo", solution: "A" }],
     run: { id: "7ded9144-6a1d-4fa7-989e-4bbf82680ddb", status: "completed", failureCode: null,
       provider: "gemini", model: "gemini-4-hydrogen" },
@@ -105,9 +112,11 @@ it("loads the private assessment and submits a corrected bilingual section for a
       scientificReport: { version: 1, origin: "gemini", findings: [
         { topic: "safety", code: "reviewRequired", basis: "interpretation", referenceIds: [] },
       ] },
+      wasteAssessment: { classifications: ["Undetermined"], supportedClassifications: [], basis: "insufficient",
+        referenceIds: [evidenceId], hazardReferenceIds: [], missing: [{ code: "mixtureEvidence" }] },
     },
     evidence: [{
-      id: "cd682442-bf0c-4d70-a803-5259ed9d0d83", source: "PubChem", solution: "A",
+      id: evidenceId, source: "PubChem", solution: "A",
       kind: "identity", title: "Reference substance", url: "https://pubchem.ncbi.nlm.nih.gov/compound/962",
       excerpt: "CID 962 · H2O", retrievedAt: createdAt,
     }],
@@ -126,6 +135,17 @@ it("loads the private assessment and submits a corrected bilingual section for a
   mount("/requests/first");
   expect(await screen.findByRole("heading", { name: adminText("geminiScientificReport") })).toBeTruthy();
   expect(screen.getByRole("img", { name: /solution A/i }).getAttribute("src")).toBe("/api/admin/requests/first/images/photo");
+  expect(screen.getByText("98.5%")).toBeTruthy();
+  expect(screen.getByText("Not Applicable")).toBeTruthy();
+  expect(screen.getByText("-0.4")).toBeTruthy();
+  expect(screen.getByText(/Custom class/)).toBeTruthy();
+  expect(screen.getByRole("heading", { name: adminText("chemicalWasteAssessment") })).toBeTruthy();
+  fireEvent.click(screen.getByLabelText(adminText("language")));
+  expect(screen.getByText(adminText("chemicalWasteAssessment", "ar"), { selector: "legend" })).toBeTruthy();
+  expect(screen.getByText("غير مخفّف")).toBeTruthy();
+  expect(document.documentElement.dir).toBe("rtl");
+  fireEvent.click(screen.getByLabelText(adminText("language", "ar")));
+
   fireEvent.click(screen.getByRole("button", { name: adminText("copyScientificSections") }));
   const field = screen.getByRole("textbox", { name: /Overall chemical safety assessment · English/ });
   expect((field as HTMLInputElement).value).toContain("indeterminate");
@@ -138,7 +158,26 @@ it("loads the private assessment and submits a corrected bilingual section for a
   }
   const citations = screen.getByRole("group", { name: adminText("evidenceSelection") });
   fireEvent.click(within(citations).getByRole("checkbox", { name: /A · Reference substance/ }));
+  const waste = within(screen.getByText(adminText("chemicalWasteAssessment"), { selector: "legend" }).closest("fieldset")!);
+  expect(waste.getByLabelText<HTMLInputElement>("Undetermined").checked).toBe(true);
+  fireEvent.click(waste.getByLabelText("Aqueous waste"));
+  fireEvent.click(waste.getByLabelText("Inorganic waste"));
+  expect(waste.getByLabelText<HTMLInputElement>("Undetermined").checked).toBe(false);
+  fireEvent.click(waste.getByRole("button", { name: adminText("wasteAddReference") }));
+  fireEvent.change(waste.getByRole("textbox", { name: adminText("sourceTitle") }), { target: { value: "Reviewed formulation" } });
+  fireEvent.change(waste.getByRole("textbox", { name: adminText("sourceUrl") }), { target: { value: "https://example.org/formulation" } });
+  const verified = waste.getByLabelText<HTMLInputElement>(adminText("wasteAttestation"));
+  fireEvent.click(verified);
+  fireEvent.change(waste.getByLabelText(/Scientific justification · English/),
+    { target: { value: "Verified the proposed waste categories against the formulation evidence." } });
+  const wasteArabic = waste.getByLabelText(/Scientific justification · العربية/);
+  expect(wasteArabic.getAttribute("dir")).toBe("rtl");
+  fireEvent.change(wasteArabic, { target: { value: "تأكد المراجع من فئات النفايات في المرجع." } });
+  expect(verified.checked).toBe(false);
   fireEvent.click(screen.getByRole("checkbox", { name: adminText("reviewAttestation") }));
+  fireEvent.click(screen.getByRole("button", { name: adminText("publishConfirm") }));
+  expect(approval).not.toHaveBeenCalled();
+  fireEvent.click(verified);
   fireEvent.click(screen.getByRole("button", { name: adminText("publishConfirm") }));
   await waitFor(() => expect(approval).toHaveBeenCalledWith(expect.objectContaining({
     runId: request.run?.id,
@@ -148,9 +187,14 @@ it("loads the private assessment and submits a corrected bilingual section for a
         topic: "safety", en: "Safety classification remains indeterminate after review.",
         ar: "ظل تصنيف السلامة غير محسوم بعد المراجعة.", referenceIds: [],
       }],
+      wasteAssessment: expect.objectContaining({
+        classifications: ["Aqueous waste", "Inorganic waste"], referenceIds: [evidenceId], attestation: true,
+        justification: { en: "Verified the proposed waste categories against the formulation evidence.", ar: "تأكد المراجع من فئات النفايات في المرجع." },
+        mixtureSources: [{ title: "Reviewed formulation", url: "https://example.org/formulation" }],
+      }),
     }),
   })));
-});
+}, 60_000);
 
 function mockManagement() {
   const records = new Map([["first", detail("first")], ["second", detail("second")]]);
