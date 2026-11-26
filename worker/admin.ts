@@ -185,7 +185,8 @@ async function retry(request: Request, env: Env, id: string, reviewer: string) {
   const row = await env.DB.prepare(
     `UPDATE public_request_workflow SET status = 'Submitted', updated_at = ?, actor = ?, run_id = NULL
      WHERE request_id = ? AND status = 'Pending Review' AND run_id = ? AND archived_at IS NULL AND EXISTS (
-       SELECT 1 FROM public_agent_runs a WHERE a.id = run_id AND
+       SELECT 1 FROM public_agent_runs a
+       WHERE a.id = public_request_workflow.run_id AND a.request_id = public_request_workflow.request_id AND
        (a.status = 'failed' OR (a.status = 'unconfigured' AND ? = 1))
      ) RETURNING status`,
   ).bind(new Date().toISOString(), reviewer, id, parsed.data.runId, providerFor(env) ? 1 : 0).first();

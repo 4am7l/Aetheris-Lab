@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { findingCodes } from "../src/scientificReport";
-import { readBytes } from "./http";
+import { parseJson, readBytes } from "./http";
 import { assembleScientificReport, type ScientificContext } from "./scientificReport";
 
 export const defaultGeminiModel = "gemini-4-hydrogen";
+export const geminiTimeoutMs = 120_000;
 export type GeminiFailureCode =
   | "AI_RATE_LIMITED" | "AI_TIMEOUT" | "AI_UNAVAILABLE" | "AI_CONFIGURATION"
   | "AI_REJECTED" | "AI_INVALID_RESPONSE";
@@ -73,8 +74,13 @@ export function geminiProvider(model: string, key: string) {
   return {
     name: "gemini" as const,
     model,
-    async assess(context: ScientificContext) {
-      const signal = AbortSignal.timeout(20_000);
+    async assess(context: ScientificContext, runId: string) {
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      const { signal } = controller;
+      const timer = setTimeout(() => controller.abort(new DOMException("Gemini deadline", "TimeoutError")), geminiTimeoutMs);
+      let httpStatus: number | undefined;
+      let stage: "request" | "http" | "response_body" | "structured_output" = "request";
       try {
         const response = await fetch(
           "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
@@ -88,7 +94,7 @@ export function geminiProvider(model: string, key: string) {
               contents: [{ role: "user", parts: [{ text: JSON.stringify({ ...context.data, findings: context.candidates }) }] }],
               generationConfig: {
                 candidateCount: 1,
-                thinkingConfig: { thinkingLevel: "LOW" },
+                thinkingConfig: { thinkingLevel: "LOW", includeThoughts: false },
                 maxOutputTokens: 4096,
                 responseMimeType: "application/json",
                 responseJsonSchema: {
@@ -106,27 +112,34 @@ export function geminiProvider(model: string, key: string) {
             }),
           },
         );
+        signal.throwIfAborted();
+        httpStatus = response.status;
         if (!response.ok) {
-          await response.body?.cancel();
+          stage = "http";
+          void response.body?.cancel().catch(() => {});
           if (response.status === 429) throw new GeminiFailure("AI_RATE_LIMITED");
           if ([400, 401, 403, 404].includes(response.status)) throw new GeminiFailure("AI_CONFIGURATION");
           throw new GeminiFailure("AI_UNAVAILABLE");
         }
+        stage = "response_body";
         const bytes = await readBytes(response, 128 * 1024);
+        signal.throwIfAborted();
         if (bytes instanceof Response) throw new GeminiFailure("AI_INVALID_RESPONSE");
-        let envelope: unknown;
-        try {
-          envelope = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
-        } catch {
-          throw new GeminiFailure("AI_INVALID_RESPONSE");
-        }
+        const envelope = parseJson(bytes);
+        if (envelope instanceof Response) throw new GeminiFailure("AI_INVALID_RESPONSE");
+        stage = "structured_output";
         return parseGeminiReport(envelope, context);
       } catch (error) {
-        if (error instanceof GeminiFailure) throw error;
-        if (signal.aborted || (error instanceof DOMException && ["TimeoutError", "AbortError"].includes(error.name))) {
-          throw new GeminiFailure("AI_TIMEOUT");
-        }
-        throw new GeminiFailure("AI_UNAVAILABLE");
+        const timedOut = signal.aborted || (error instanceof DOMException && error.name === "TimeoutError");
+        const failure = error instanceof GeminiFailure ? error
+          : new GeminiFailure(timedOut ? "AI_TIMEOUT" : "AI_UNAVAILABLE");
+        console.warn({
+          event: "gemini_assessment_failed", runId, model, failureCode: failure.code, stage, httpStatus,
+          elapsedMs: Date.now() - startedAt, timeoutMs: geminiTimeoutMs,
+        });
+        throw failure;
+      } finally {
+        clearTimeout(timer);
       }
     },
   };

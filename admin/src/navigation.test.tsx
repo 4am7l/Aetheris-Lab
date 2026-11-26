@@ -65,6 +65,34 @@ function mount(path = "/") {
   </MemoryRouter></QueryClientProvider></StrictMode>);
 }
 
+it("queues a failed assessment for the same request and shows the retry confirmation", async () => {
+  const failed: AdminRequestDetail = {
+    ...detail("first"), status: "Pending Review", canRetry: true,
+    run: { id: "failed-run", status: "failed", failureCode: "AI_TIMEOUT", provider: "gemini", model: "gemini-4-hydrogen" },
+  };
+  const reply = deferred();
+  const retry = vi.fn();
+  let queued = false;
+  const fallback = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === "/api/admin/requests/first") return Response.json(queued ? detail("first") : failed);
+    if (path === "/api/admin/requests/first/retry") {
+      retry(options?.method, new Headers(options?.headers).get("X-CSRF-Token"), JSON.parse(String(options?.body)));
+      return reply.promise;
+    }
+    return fallback(path, options);
+  });
+  mount("/requests/first");
+  const button = await screen.findByRole("button", { name: adminText("retryAgent") });
+  fireEvent.click(button);
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(true));
+  expect(retry).toHaveBeenCalledExactlyOnceWith("POST", "token", { runId: "failed-run" });
+  queued = true;
+  reply.resolve(Response.json({ status: "Submitted" }));
+  expect(await screen.findByText(adminText("agentRetryQueued"))).toBeTruthy();
+  expect(screen.queryByRole("button", { name: adminText("retryAgent") })).toBeNull();
+});
+
 it("loads the private assessment and submits a corrected bilingual section for approval", async () => {
   const request: AdminRequestDetail = {
     ...detail("first"),

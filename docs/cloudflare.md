@@ -74,6 +74,10 @@ The optional OpenAI adapter requires `AI_PROVIDER=openai`, `AI_MODEL` set to a C
 
 PubChem receives chemical identifiers. Gemini receives matched reference identities, selected evidence, coded gaps, and supported deterministic inputs and outputs. Tracking tokens, reviewer data, photos, and the submitter's free-text notes stay within the review workflow. [PubChem PUG REST and PUG View](https://pubchem.ncbi.nlm.nih.gov/docs/), [NIOSH Pocket Guide](https://www.cdc.gov/niosh/npg/).
 
+The minute-by-minute Cron Trigger awaits the assessment. Cloudflare allows up to 15 minutes of wall time for scheduled invocations and excludes network and D1 waits from CPU time. The Gemini deadline is 120 seconds for headers and response body combined. Both solutions are processed in parallel with up to six sequential 8-second source requests per solution. The four-minute D1 lease allows for those requests and database writes. The Worker starts Gemini only when at least 135 seconds remain on the lease. If the invocation ends before completing the run, a later cron marks an expired lease as failed and returns the request to human review. [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/).
+
+In Workers Logs when enabled, or during a live Worker tail, filter for `gemini_assessment_failed` or `niosh_lookup_failed` and use the run ID shown in the admin detail. Gemini diagnostics include the model, failure code, stage, elapsed time, deadline, and HTTP status if available. NIOSH diagnostics identify the solution side and failing source stage. Application diagnostics contain only these operational fields.
+
 ## One manual Gemini test
 
 1. On the isolated staging Worker, check `/api/health` returns `agent: "configured"` and `review: true`. Use the staging public Pages and admin Pages URLs.

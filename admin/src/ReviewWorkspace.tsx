@@ -167,6 +167,7 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
   const mutation = useMutation({
     mutationFn: ({ action, body }: { action: "decision" | "retry"; body: unknown }) =>
       adminAction(id, action, body, csrfToken),
+    retry: false,
     onError(error) {
       if (error instanceof AdminError && [401, 403].includes(error.status)) {
         void client.invalidateQueries({ queryKey: sessionQueryKey });
@@ -191,7 +192,9 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
       {mutation.isError && <Notice kind="error">
         {t(mutation.error instanceof AdminError && mutation.error.status === 409 ? "adminStale" : "adminWriteError")}
       </Notice>}
-      {mutation.isSuccess && <div role="status"><Notice>{t("adminSaved")}</Notice></div>}
+      {mutation.isSuccess && <div role="status">
+        <Notice>{t(mutation.variables.action === "retry" ? "agentRetryQueued" : "adminSaved")}</Notice>
+      </div>}
       {request && (
         <div className="admin-review-cards">
           <div className="admin-request-controls">

@@ -1,7 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import worker, { type Env } from "../worker";
 import { blankSolution } from "./domain";
 import dilutionBenchmark from "../tests/fixtures/methanol-dilution.json";
@@ -306,6 +306,7 @@ describe("assessment and reviewer workflow", () => {
   let session: string;
   let csrfToken: string;
   let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
+  let warn: MockInstance<typeof console.warn>;
   let onLookup: (() => Promise<void>) | undefined;
   let badOutput = false;
   const objects = new Map<string, Blob>();
@@ -339,6 +340,23 @@ describe("assessment and reviewer workflow", () => {
     });
   }
 
+  function mockGemini(implementation: typeof fetch) {
+    const fetchSources = mockFetch.getMockImplementation()!;
+    const gemini = vi.fn<typeof fetch>(implementation);
+    mockFetch.mockImplementation((resource, options) =>
+      String(resource).startsWith("https://generativelanguage.googleapis.com/")
+        ? gemini(resource, options)
+        : fetchSources(resource, options));
+    return gemini;
+  }
+
+  function geminiCompletion(options?: RequestInit) {
+    const request = JSON.parse(String(options?.body));
+    const context = JSON.parse(request.contents[0].parts[0].text);
+    const findings = context.findings.map(({ code }: { code: string }) => code);
+    return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ findings }) }] } }] });
+  }
+
   function browserCookie(response: Response, name: string) {
     return response.headers.getSetCookie().find((value) => value.startsWith(name + "="));
   }
@@ -363,6 +381,7 @@ describe("assessment and reviewer workflow", () => {
     objects.clear();
     onLookup = undefined;
     badOutput = false;
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     env = {
       DB: testDatabase(db),
       SUBMISSION_LIMIT: testLimiter(5),
@@ -414,7 +433,8 @@ describe("assessment and reviewer workflow", () => {
         const card = (heading: string, body: string) => '<div class="card-title h6">' + heading
           + '</div><div class="card-body"><div class="card-text">' + body + '</div></div>';
         return new Response(
-          card("CAS No.", "56-81-5") + card("Symptoms", "Irritation"),
+          card("CAS No.", "56-81-5") + card("Symptoms", "Irritation")
+          + "<div Class='card-title h6'>Solubility</div><div class='card-body'><div class='card-text'>Miscible</div></div>",
         );
       }
       if (url.href === "https://api.openai.com/v1/chat/completions") {
@@ -438,6 +458,8 @@ describe("assessment and reviewer workflow", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     db.close();
   });
@@ -688,11 +710,11 @@ describe("assessment and reviewer workflow", () => {
     ["rate limit", "AI_RATE_LIMITED"],
     ["timeout", "AI_TIMEOUT"],
     ["provider unavailable", "AI_UNAVAILABLE"],
+    ["network failure", "AI_UNAVAILABLE"],
     ["configuration error", "AI_CONFIGURATION"],
   ])("records a private Gemini %s outcome and keeps the deterministic draft", async (scenario, failureCode) => {
     env.AGENT_API_KEY = "test-gemini-key";
-    const sourceFetch = mockFetch.getMockImplementation()!;
-    const gemini = vi.fn<typeof fetch>(async (resource, options) => {
+    const gemini = mockGemini(async (resource, options) => {
       expect(resource).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent");
       expect(new Headers(options?.headers).get("x-goog-api-key")).toBe("test-gemini-key");
       expect(options?.signal).toBeInstanceOf(AbortSignal);
@@ -702,14 +724,17 @@ describe("assessment and reviewer workflow", () => {
       const context = JSON.parse(body.contents[0].parts[0].text);
       expect(context.calculation.result.analyticalMolPerL).toBeCloseTo(0.102, 14);
       expect(body.generationConfig).toMatchObject({
+        candidateCount: 1, thinkingConfig: { thinkingLevel: "LOW", includeThoughts: false },
         responseMimeType: "application/json",
         responseJsonSchema: {
           properties: { findings: { items: { enum: expect.arrayContaining(["methanolBalance", "reviewRequired"]) } } },
           required: ["findings"], additionalProperties: false,
         },
       });
+      expect(body.generationConfig.thinkingConfig).not.toHaveProperty("thinkingBudget");
       if (scenario === "rate limit") return new Response("private upstream detail", { status: 429 });
       if (scenario === "provider unavailable") return new Response("private upstream detail", { status: 503 });
+      if (scenario === "network failure") throw new Error("private upstream detail test-gemini-key");
       if (scenario === "configuration error") return new Response("private upstream detail", { status: 403 });
       if (scenario === "timeout") throw new DOMException("private upstream detail", "TimeoutError");
       if (scenario === "blocked response") return Response.json({ promptFeedback: { blockReason: "SAFETY" } });
@@ -733,10 +758,6 @@ describe("assessment and reviewer workflow", () => {
         ] },
       }] });
     });
-    mockFetch.mockImplementation((resource, options) =>
-      String(resource).startsWith("https://generativelanguage.googleapis.com/")
-        ? gemini(resource, options)
-        : sourceFetch(resource, options));
     const response = await post(dilutionBenchmark);
     expect(response.status).toBe(201);
     const receipt = await response.json();
@@ -749,6 +770,18 @@ describe("assessment and reviewer workflow", () => {
     expect(detail.run).toMatchObject({
       status: failureCode ? "failed" : "completed", provider: "gemini", model: "gemini-4-hydrogen", failureCode,
     });
+    if (failureCode) {
+      const httpStatus = { "rate limit": 429, "provider unavailable": 503, "configuration error": 403,
+        "timeout": undefined, "network failure": undefined } as Record<string, number | undefined>;
+      expect(warn).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        event: "gemini_assessment_failed", runId: detail.run.id, model: "gemini-4-hydrogen",
+        failureCode, httpStatus: Object.hasOwn(httpStatus, scenario) ? httpStatus[scenario] : 200,
+        stage: expect.any(String), elapsedMs: expect.any(Number), timeoutMs: 120_000,
+      }));
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private upstream detail|test-gemini-key/);
+    } else {
+      expect(warn).not.toHaveBeenCalled();
+    }
     expect(detail.report.calculation.result.analyticalMolPerL).toBeCloseTo(0.102, 14);
     expect(detail.report.scientificReport).toMatchObject({
       version: 1, origin: failureCode ? "evidence-review" : "gemini",
@@ -804,8 +837,7 @@ describe("assessment and reviewer workflow", () => {
   it("grounds Gemini in matched sources, withholds private data, and keeps rejection private", async () => {
     env.AGENT_API_KEY = "test-gemini-key";
     const receipt = await (await post(documented)).json();
-    const sourceFetch = mockFetch.getMockImplementation()!;
-    const gemini = vi.fn<typeof fetch>(async (_resource, options) => {
+    const gemini = mockGemini(async (_resource, options) => {
       const raw = String(options?.body);
       for (const secret of [documented.a.notes, documented.conditions, receipt.trackingToken, env.ADMIN_PASSWORD]) {
         expect(raw).not.toContain(secret);
@@ -815,14 +847,11 @@ describe("assessment and reviewer workflow", () => {
       expect(context.evidence).toEqual(expect.arrayContaining([
         expect.objectContaining({ source: "PubChem", excerpt: expect.stringContaining("C3H8O3") }),
         expect.objectContaining({ source: "NIOSH", excerpt: "Irritation" }),
+        expect.objectContaining({ source: "NIOSH", title: "Glycerin (mist) · Solubility", excerpt: "Miscible" }),
       ]));
       const findings = context.findings.map(({ code }: { code: string }) => code);
       return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ findings }) }] } }] });
     });
-    mockFetch.mockImplementation((resource, options) =>
-      String(resource).startsWith("https://generativelanguage.googleapis.com/")
-        ? gemini(resource, options)
-        : sourceFetch(resource, options));
     await scheduled();
     expect(gemini).toHaveBeenCalledOnce();
     const path = "requests/" + receipt.id;
@@ -836,6 +865,217 @@ describe("assessment and reviewer workflow", () => {
     expect(published.status).toBe("Rejected");
     expect(published.result).toBeUndefined();
     expect(JSON.stringify(published)).not.toContain(approvalNotes);
+  });
+
+  it.each(["slow success", "headers timeout", "body timeout"])("handles a Gemini %s with the 120-second deadline", async (scenario) => {
+    env.AGENT_API_KEY = "test-gemini-key";
+    const receipt = await (await post(documented)).json();
+    const path = "requests/" + receipt.id;
+    vi.useFakeTimers();
+    let providerStarted!: () => void;
+    const started = new Promise<void>((resolve) => { providerStarted = resolve; });
+    const gemini = mockGemini(async (_resource, options) => {
+      const signal = options!.signal!;
+      providerStarted();
+      if (scenario === "headers timeout") {
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }
+      if (scenario === "body timeout") {
+        return new Response(new ReadableStream({
+          start(controller) {
+            signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+          },
+        }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 119_999));
+      return geminiCompletion(options);
+    });
+
+    const running = scheduled();
+    await started;
+    const checkpoint = await (await adminCall(path)).json();
+    expect(checkpoint).toMatchObject({
+      status: "Analyzing", canRetry: false, report: { scientificReport: { origin: "evidence-review" } },
+      evidence: expect.arrayContaining([expect.objectContaining({ source: "PubChem" }), expect.objectContaining({ source: "NIOSH" })]),
+    });
+    for (const advance of [60_000, 59_998]) {
+      await vi.advanceTimersByTimeAsync(advance);
+      await scheduled();
+      expect(gemini).toHaveBeenCalledOnce();
+      expect(gemini.mock.calls[0][1]?.signal?.aborted).toBe(false);
+      expect((await (await track(receipt)).json()).status).toBe("Analyzing");
+    }
+    const succeeded = scenario === "slow success";
+    await vi.advanceTimersByTimeAsync(succeeded ? 1 : 2);
+    await running;
+    await scheduled();
+
+    const result = await (await adminCall(path)).json();
+    expect(gemini).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      status: "Pending Review", canRetry: !succeeded, evidence: checkpoint.evidence,
+      run: { id: checkpoint.run.id, status: succeeded ? "completed" : "failed", failureCode: succeeded ? null : "AI_TIMEOUT" },
+      report: { scientificReport: { origin: succeeded ? "gemini" : "evidence-review" } },
+    });
+    if (!succeeded) {
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+        failureCode: "AI_TIMEOUT", elapsedMs: 120_000,
+        stage: scenario === "headers timeout" ? "request" : "response_body",
+      }));
+    }
+  });
+
+  it("declines Gemini dispatch when source and database delays exhaust the lease budget", async () => {
+    env.AGENT_API_KEY = "test-gemini-key";
+    const receipt = await (await post(documented)).json();
+    vi.useFakeTimers();
+    const delayedTime = Date.now() + 110_000;
+    onLookup = async () => { vi.setSystemTime(delayedTime); };
+    const gemini = mockGemini(async () => { throw new Error("Unexpected Gemini request"); });
+    await scheduled();
+    await scheduled();
+    expect(gemini).not.toHaveBeenCalled();
+    expect(await (await adminCall("requests/" + receipt.id)).json()).toMatchObject({
+      status: "Pending Review", canRetry: true, run: { failureCode: "LEASE_INSUFFICIENT" },
+      report: { scientificReport: { origin: "evidence-review" } },
+      evidence: expect.arrayContaining([expect.objectContaining({ source: "PubChem" })]),
+    });
+  });
+
+  it("retains the evidence-only draft and discards a late Gemini result after lease recovery", async () => {
+    env.AGENT_API_KEY = "test-gemini-key";
+    const receipt = await (await post(documented)).json();
+    const path = "requests/" + receipt.id;
+    vi.useFakeTimers();
+    let start!: () => void;
+    const started = new Promise<void>((resolve) => { start = resolve; });
+    let resume!: () => void;
+    const paused = new Promise<void>((resolve) => { resume = resolve; });
+    const gemini = mockGemini(async (_resource, options) => {
+      start();
+      await paused;
+      return geminiCompletion(options);
+    });
+    const running = scheduled();
+    await started;
+    const checkpoint = await (await adminCall(path)).json();
+    const lease = db.prepare("SELECT lease_until FROM public_agent_runs WHERE id = ?").get(checkpoint.run.id);
+    // Simulate an invocation suspended until after a later cron recovers its expired lease.
+    vi.setSystemTime(new Date(String(lease?.lease_until)));
+    await scheduled();
+    resume();
+    await running;
+    await scheduled();
+    expect(gemini).toHaveBeenCalledOnce();
+    expect(await (await adminCall(path)).json()).toMatchObject({
+      status: "Pending Review", canRetry: true, report: checkpoint.report, evidence: checkpoint.evidence,
+      run: { id: checkpoint.run.id, status: "failed", failureCode: "LEASE_EXPIRED" },
+    });
+  });
+
+  it.each(["blocked index", "changed profile"])("uses attributed NIOSH annotations after a %s and keeps honest gaps", async (scenario) => {
+    const sources = mockFetch.getMockImplementation()!;
+    const original = "https://www.cdc.gov/niosh/npg/npgd0302.html";
+    mockFetch.mockImplementation((resource, options) => {
+      const url = String(resource);
+      if (scenario === "blocked index" && url.endsWith("/npgdcas.html")) {
+        return Promise.resolve(new Response("private upstream body", { status: 403 }));
+      }
+      if (scenario === "changed profile" && url === original) {
+        return Promise.resolve(new Response("<html>Unrecognized profile markup</html>"));
+      }
+      if (url.endsWith("/753/JSON")) {
+        return Promise.resolve(Response.json({ Record: {
+          RecordNumber: 753,
+          Reference: [
+            { ReferenceNumber: 1, SourceName: "The National Institute for Occupational Safety and Health (NIOSH)", URL: original },
+            { ReferenceNumber: 2, SourceName: "Another depositor", URL: original },
+            { ReferenceNumber: 3, SourceName: "The National Institute for Occupational Safety and Health (NIOSH)", URL: "https://example.test/npgd0302.html" },
+          ],
+          Section: [{ TOCHeading: "Toxicity", Section: [{
+            TOCHeading: "Signs and Symptoms", Information: [1, 2, 3].map((number) => ({
+              ReferenceNumber: number, Value: { StringWithMarkup: [{ String: number === 1 ? "Irritation" : "Unattributed text" }] },
+            })),
+          }] }],
+        } }));
+      }
+      if (url.endsWith("/962/JSON")) {
+        return Promise.resolve(Response.json({ Record: { RecordNumber: 962, Reference: [], Section: [] } }));
+      }
+      return sources(resource, options);
+    });
+    const receipt = await (await post(documented)).json();
+    await scheduled();
+    const result = await (await adminCall("requests/" + receipt.id)).json();
+    expect(result.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ source: "PubChem" })]));
+    expect(result.evidence.filter(({ source }: { source: string }) => source === "NIOSH")).toEqual([
+      expect.objectContaining({ solution: "A", title: "Glycerol · Symptoms", kind: "hazard", url: original, excerpt: "Irritation" }),
+    ]);
+    expect(result.report.gaps.filter(({ code }: { code: string }) => code.startsWith("niosh"))).toEqual([
+      { solution: "B", code: scenario === "blocked index" ? "nioshUnavailable" : "nioshNoRecord" },
+    ]);
+    expect(mockFetch.mock.calls.filter(([url]) => String(url).endsWith("/npgdcas.html"))).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining(scenario === "blocked index"
+      ? { event: "niosh_lookup_failed", runId: result.run.id, stage: "cdc_index", code: "HTTP_ERROR", httpStatus: 403 }
+      : { event: "niosh_lookup_failed", runId: result.run.id, stage: "cdc_profile", code: "PROFILE_FORMAT_CHANGED" }));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private upstream body");
+  });
+
+  it("retains PubChem evidence when both NIOSH lookups fail and requires an explicit Gemini retry", async () => {
+    env.AGENT_API_KEY = "test-gemini-key";
+    const sources = mockFetch.getMockImplementation()!;
+    mockFetch.mockImplementation((resource, options) => {
+      const url = new URL(String(resource));
+      if (url.hostname === "www.cdc.gov" || url.pathname.endsWith("/JSON") && url.search === "" &&
+        url.pathname.startsWith("/rest/pug_view/")) {
+        return Promise.resolve(new Response(null, { status: 503 }));
+      }
+      return sources(resource, options);
+    });
+    const gemini = mockGemini(async (_resource, options) => geminiCompletion(options));
+    gemini.mockRejectedValueOnce(new DOMException("Mock provider deadline", "TimeoutError"));
+    const receipt = await (await post(documented)).json();
+    const path = "requests/" + receipt.id;
+
+    await scheduled();
+    await scheduled();
+    expect(gemini).toHaveBeenCalledOnce();
+    const failed = await (await adminCall(path)).json();
+    expect(failed).toMatchObject({
+      status: "Pending Review", canRetry: true, run: { status: "failed", failureCode: "AI_TIMEOUT" },
+      report: { scientificReport: { origin: "evidence-review" } },
+    });
+    expect(failed.report.gaps.filter(({ code }: { code: string }) => code.startsWith("niosh"))).toEqual([
+      { code: "nioshUnavailable", solution: "A" }, { code: "nioshUnavailable", solution: "B" },
+    ]);
+    expect(failed.evidence).toEqual([
+      expect.objectContaining({ source: "PubChem", solution: "A" }),
+      expect.objectContaining({ source: "PubChem", solution: "B" }),
+    ]);
+    const priorDraft = () => db.prepare("SELECT report_json FROM public_assessment_drafts WHERE run_id = ?").get(failed.run.id);
+    const snapshot = priorDraft();
+    const retry = { runId: failed.run.id };
+    expect((await adminCall(path + "/retry", retry, "")).status).toBe(401);
+    const clicks = await Promise.all([adminCall(path + "/retry", retry), adminCall(path + "/retry", retry)]);
+    expect(clicks.map(({ status }) => status).sort()).toEqual([200, 409]);
+    expect((await (await track(receipt)).json()).status).toBe("Submitted");
+    expect(gemini).toHaveBeenCalledOnce();
+
+    await Promise.all([scheduled(), scheduled(), scheduled()]);
+    expect(gemini).toHaveBeenCalledTimes(2);
+    const recovered = await (await adminCall(path)).json();
+    expect(recovered).toMatchObject({
+      id: receipt.id, status: "Pending Review", canRetry: false,
+      run: { status: "completed" }, report: { scientificReport: { origin: "gemini" } },
+    });
+    expect(recovered.run.id).not.toBe(failed.run.id);
+    expect(priorDraft()).toEqual(snapshot);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM public_assessment_evidence WHERE run_id = ?").get(failed.run.id)?.count).toBe(2);
+    expect((await adminCall(path + "/retry", retry)).status).toBe(409);
+    expect((await adminCall(path + "/retry", { runId: recovered.run.id })).status).toBe(409);
+    expect((await (await track(receipt)).json()).result).toBeUndefined();
   });
 
   it("skips Gemini when neither matched evidence nor a validated calculation is available", async () => {
