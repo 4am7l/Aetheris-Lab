@@ -26,8 +26,9 @@ export const reviewedScienceSchema = z.array(reviewedSectionFields.extend({
   sources: z.array(scientificSourceSchema).max(20),
 })).min(1).max(scientificTopics.length)
   .refine((sections) => new Set(sections.map(({ topic }) => topic)).size === sections.length);
+export const scientificReferenceIdSchema = z.union([z.uuidv4(), z.string().regex(/^method-[1-9][0-9]?$/)]);
 export const scientificSectionInputSchema = z.array(reviewedSectionFields.extend({
-  referenceIds: z.array(z.union([z.uuidv4(), z.string().regex(/^method-[1-9][0-9]?$/)])).max(20),
+  referenceIds: z.array(scientificReferenceIdSchema).max(20),
 })).min(1).max(scientificTopics.length)
   .refine((sections) => new Set(sections.map(({ topic }) => topic)).size === sections.length);
 export type ScientificSectionInput = z.infer<typeof scientificSectionInputSchema>[number];

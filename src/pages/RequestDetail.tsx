@@ -2,11 +2,13 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { listLocalRequests } from "../services/local";
 import { Icon, Notice } from "../ui";
-import { useText } from "../text";
+import { useLanguage, useText } from "../text";
+import { submittedSolutionFields } from "../chemistryLabels";
 import PageHeading from "../components/PageHeading";
 export default function RequestDetail() {
   const { id } = useParams();
   const t = useText();
+  const language = useLanguage();
   const q = useQuery({ queryKey: ["requests"], queryFn: listLocalRequests });
   if (q.isPending) return <div className="page skeleton" />;
   if (q.isError)
@@ -79,7 +81,6 @@ export default function RequestDetail() {
                   "cas",
                   "concentration",
                   "unit",
-                  "solvent",
                   "state",
                   "temperature",
                   "quantity",
@@ -91,6 +92,9 @@ export default function RequestDetail() {
                   <dt>{t(key)}</dt>
                   <dd>{s[key] || "—"}</dd>
                 </div>
+              ))}
+              {submittedSolutionFields(s, language).map(([key, value]) => (
+                <div key={key}><dt>{t(key)}</dt><dd dir="auto">{value}</dd></div>
               ))}
             </dl>
           </section>

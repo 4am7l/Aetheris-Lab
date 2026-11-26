@@ -5,10 +5,13 @@ import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import { useState, type FormEvent } from "react";
 import { finalResultSchema, type PublicResult } from "../../src/domain";
-import { reviewInputSchema, type AdminRequestDetail, type ReviewDecision } from "../../src/review";
+import { needsWasteReview, reviewInputSchema, type AdminRequestDetail, type ReviewDecision } from "../../src/review";
 import { resultLabel } from "../../src/reviewText";
 import type { ScientificSectionInput } from "../../src/scientificReport";
 import { ScientificSectionEditor } from "./ScientificSectionEditor";
+import { ReviewerSources } from "./ReviewerSources";
+import { WasteAssessmentEditor } from "./WasteAssessmentEditor";
+import { prepareWasteReview } from "./wasteText";
 import { useAdminText as useText } from "./text";
 import { Notice } from "../../src/ui";
 
@@ -37,6 +40,8 @@ export function ReviewForm({ request, busy, onSubmit }: {
   const [selected, setSelected] = useState<string[]>([]);
   const [externalSources, setExternalSources] = useState<{ title: string; url: string }[]>([]);
   const [scientificSections, setScientificSections] = useState<ScientificSectionInput[]>([]);
+  const [wasteAssessment, setWasteAssessment] = useState(() => needsWasteReview(request.input, request.report)
+    ? prepareWasteReview(request) : undefined);
   const [attestation, setAttestation] = useState(false);
   const [invalid, setInvalid] = useState(false);
   const approval = decision === "Approved";
@@ -55,6 +60,7 @@ export function ReviewForm({ request, busy, onSubmit }: {
         limitations: items(fields.limitations),
         evidenceIds: selected, externalSources, attestation,
         ...(scientificSections.length ? { scientificSections } : {}),
+        ...(wasteAssessment ? { wasteAssessment } : {}),
       },
     } : base);
     const needsMixtureSource = approval && classification === "Compatible under documented conditions" && !externalSources.length;
@@ -108,29 +114,9 @@ export function ReviewForm({ request, busy, onSubmit }: {
               )}
               {classification === "Compatible under documented conditions" &&
                 <Notice kind="warning">{t("mixtureSourceRequired")}</Notice>}
-              {externalSources.map((source, index) => (
-                <fieldset key={index} className="request-fields admin-form">
-                  <legend>{t("externalReference")}</legend>
-                  <TextField required fullWidth label={t("sourceTitle")} value={source.title}
-                    slotProps={{ htmlInput: { maxLength: 250 } }}
-                    onChange={(event) => setExternalSources((current) => current.map((item, i) =>
-                      i === index ? { ...item, title: event.target.value } : item))} />
-                  <TextField required fullWidth type="url" label={t("sourceUrl")} value={source.url}
-                    slotProps={{ htmlInput: { maxLength: 1500 } }}
-                    onChange={(event) => setExternalSources((current) => current.map((item, i) =>
-                      i === index ? { ...item, url: event.target.value } : item))} />
-                  <Button type="button" onClick={() => setExternalSources((current) => current.filter((_, i) => i !== index))}>
-                    {t("remove")}
-                  </Button>
-                </fieldset>
-              ))}
-              {externalSources.length < 5 && <div>
-                <Button type="button" variant="outlined"
-                  onClick={() => setExternalSources((current) => [...current, { title: "", url: "" }])}>
-                  {t("addReference")}
-                </Button>
-              </div>}
+              <ReviewerSources sources={externalSources} onChange={setExternalSources} />
               <ScientificSectionEditor request={request} sections={scientificSections} onChange={setScientificSections} />
+              {wasteAssessment && <WasteAssessmentEditor request={request} value={wasteAssessment} onChange={setWasteAssessment} />}
               <FormControlLabel label={t("reviewAttestation")}
                 control={<Checkbox checked={attestation} onChange={(_, checked) => setAttestation(checked)} />} />
             </>

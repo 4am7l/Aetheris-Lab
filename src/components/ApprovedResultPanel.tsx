@@ -3,6 +3,7 @@ import type { PublicResult } from "../domain";
 import { resultLabel } from "../reviewText";
 import { scientificLabels } from "../scientificLabels";
 import { Icon, Notice } from "../ui";
+import { WasteAssessmentSection } from "./WasteAssessmentSection";
 
 export function ApprovedResultPanel({ result }: { result: PublicResult }) {
   const t = useText();
@@ -42,6 +43,7 @@ export function ApprovedResultPanel({ result }: { result: PublicResult }) {
           )}</ul>}
         </section>)}
       </section>}
+      {result.wasteAssessment && <WasteAssessmentSection assessment={result.wasteAssessment} />}
       <h3>{t("references")}</h3>
       <ul>
         {result.sources.map(({ url, title }) => (

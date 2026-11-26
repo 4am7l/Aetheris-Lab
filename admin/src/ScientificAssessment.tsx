@@ -22,7 +22,7 @@ export function ScientificAssessment({ request }: { request: AdminRequestDetail 
       <section key={topic} className="admin-evidence">
         <h4>{scientificLabels[topic][language]}</h4>
         {findings.map(({ code, basis, referenceIds }) => {
-          const content = findingContent(code, request);
+          const content = findingContent(code, request, language);
           return <div key={code}>
             <div className="small muted">{t(basis === "submitted" ? "submittedEvidence" : basis)}</div>
             <p>{content[language]}</p>

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { CalculationExplanation, CalculationReport } from "./calculation";
 import { finalResultSchema, publicRequestIdSchema, type PublicResult, type RequestInput } from "./domain";
 import { scientificSectionInputSchema, type ScientificDraft } from "./scientificReport";
+import { wasteReviewInputSchema, type WasteDraft } from "./wasteAssessment";
 
 export type SolutionSide = "A" | "B";
 export type AgentStatus = "running" | "completed" | "unconfigured" | "failed";
@@ -64,6 +65,13 @@ export interface PreliminaryReport {
   calculation?: CalculationReport;
   calculationExplanation?: CalculationExplanation;
   scientificReport?: ScientificDraft;
+  wasteAssessment?: WasteDraft;
+}
+
+export function needsWasteReview(input?: RequestInput, report?: PreliminaryReport | null) {
+  return Boolean(report?.wasteAssessment || input && [input.a, input.b].some((solution) =>
+    solution.ph !== undefined || solution.purity !== undefined || solution.customSolvent !== undefined ||
+    solution.classifications !== undefined || solution.customClassification !== undefined));
 }
 
 export function scientificReferences(
@@ -101,6 +109,7 @@ const approvalSchema = z.strictObject({
   evidenceIds: z.array(publicRequestIdSchema).max(20),
   externalSources: z.array(source).max(5),
   scientificSections: scientificSectionInputSchema.optional(),
+  wasteAssessment: wasteReviewInputSchema.optional(),
   attestation: z.literal(true),
 }).refine(({ evidenceIds, externalSources }) => evidenceIds.length + externalSources.length > 0);
 export const reviewInputSchema = z.discriminatedUnion("decision", [

@@ -290,6 +290,14 @@ const password = "Test only: reviewer passphrase! 42";
 const wrongPassword = "Test only: incorrect password! 42";
 const nativePasswordComparison = vi.fn(timingSafeEqual);
 const approvalNotes = "Private laboratory review notes";
+const reviewedWaste = {
+  classifications: ["Undetermined"],
+  justification: { en: "The reviewer found insufficient evidence for the proposed mixture.", ar: "وجد المراجع أن أدلة الخليط المقترح غير كافية." },
+  hazards: { en: "Mixture hazard characteristics remain undetermined.", ar: "تظل خصائص خطورة الخليط غير محدّدة." },
+  limitations: { en: "A formulation-specific review is needed.", ar: "يلزم تقييم خاص بالتركيبة." },
+  missingInformation: { en: "Mixture-specific evidence is needed.", ar: "يلزم تقديم أدلة خاصة بالخليط." },
+  referenceIds: [], mixtureSources: [], attestation: true,
+};
 const documented = {
   a: { ...blankSolution, name: "Glycerol", formula: "C3H8O3", notes: "Private sample note" },
   b: { ...blankSolution, name: "Unknown", formula: "H2O", cas: "7732-18-5" },
@@ -354,7 +362,11 @@ describe("assessment and reviewer workflow", () => {
     const request = JSON.parse(String(options?.body));
     const context = JSON.parse(request.contents[0].parts[0].text);
     const findings = context.findings.map(({ code }: { code: string }) => code);
-    return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ findings }) }] } }] });
+    const supported = context.waste.supportedClassifications;
+    const wasteClassifications = supported.length ? supported : ["Undetermined"];
+    return Response.json({ candidates: [{ finishReason: "STOP", content: {
+      parts: [{ text: JSON.stringify({ findings, wasteClassifications }) }],
+    } }] });
   }
 
   function browserCookie(response: Response, name: string) {
@@ -703,6 +715,11 @@ describe("assessment and reviewer workflow", () => {
     ["inapplicable finding", "AI_INVALID_RESPONSE"],
     ["duplicate finding", "AI_INVALID_RESPONSE"],
     ["invented property", "AI_INVALID_RESPONSE"],
+    ["unsupported waste class", "AI_INVALID_RESPONSE"],
+    ["combined undetermined waste class", "AI_INVALID_RESPONSE"],
+    ["duplicate waste class", "AI_INVALID_RESPONSE"],
+    ["invented waste evidence", "AI_INVALID_RESPONSE"],
+    ["missing waste output", "AI_INVALID_RESPONSE"],
     ["missing safety assessment", "AI_INVALID_RESPONSE"],
     ["truncated response", "AI_INVALID_RESPONSE"],
     ["malformed JSON", "AI_INVALID_RESPONSE"],
@@ -728,7 +745,7 @@ describe("assessment and reviewer workflow", () => {
         responseMimeType: "application/json",
         responseJsonSchema: {
           properties: { findings: { items: { enum: expect.arrayContaining(["methanolBalance", "reviewRequired"]) } } },
-          required: ["findings"], additionalProperties: false,
+          required: ["findings", "wasteClassifications"], additionalProperties: false,
         },
       });
       expect(body.generationConfig.thinkingConfig).not.toHaveProperty("thinkingBudget");
@@ -746,6 +763,11 @@ describe("assessment and reviewer workflow", () => {
         : required;
       const output = scenario === "malformed JSON" ? "{ bad JSON" : JSON.stringify({
         findings,
+        wasteClassifications: scenario === "missing waste output" ? undefined
+          : scenario === "unsupported waste class" ? ["Aqueous waste"]
+          : scenario === "combined undetermined waste class" ? ["Undetermined", "Aqueous waste"]
+          : scenario === "duplicate waste class" ? ["Undetermined", "Undetermined"] : ["Undetermined"],
+        ...(scenario === "invented waste evidence" ? { wasteReferenceIds: [randomUUID()] } : {}),
         ...(scenario === "invented property" ? { concentration: 42, citation: "https://unverified.example" } : {}),
       });
       return Response.json({ candidates: [{
@@ -783,6 +805,8 @@ describe("assessment and reviewer workflow", () => {
       expect(warn).not.toHaveBeenCalled();
     }
     expect(detail.report.calculation.result.analyticalMolPerL).toBeCloseTo(0.102, 14);
+    expect(detail.report.wasteAssessment).toMatchObject({ classifications: ["Undetermined"],
+      missing: expect.arrayContaining([{ code: "mixtureEvidence" }, { code: "mixtureHazards" }]) });
     expect(detail.report.scientificReport).toMatchObject({
       version: 1, origin: failureCode ? "evidence-review" : "gemini",
       findings: expect.arrayContaining([{
@@ -812,7 +836,7 @@ describe("assessment and reviewer workflow", () => {
           hazards: [], incompatibilities: [], storage: "Not assessed", container: "Not assessed",
           limitations: ["Compatibility requires separate evidence"], evidenceIds: [],
           externalSources: [{ title: "OpenStax Chemistry 2e", url: "https://openstax.org/books/chemistry-2e/pages/3-3-molarity" }],
-          scientificSections: [section], attestation: true,
+          scientificSections: [section], wasteAssessment: reviewedWaste, attestation: true,
         },
       };
       expect((await adminCall(path + "/decision", {
@@ -836,7 +860,16 @@ describe("assessment and reviewer workflow", () => {
 
   it("grounds Gemini in matched sources, withholds private data, and keeps rejection private", async () => {
     env.AGENT_API_KEY = "test-gemini-key";
-    const receipt = await (await post(documented)).json();
+    const declarations = {
+      ...documented,
+      a: { ...documented.a, solvent: "Neat", purity: "99.99", ph: "-0.5",
+        classifications: ["Organic", "Alcohol", "Other"], customClassification: "Supplier grade" },
+      b: { ...documented.b, solvent: "Other", customSolvent: "Deionized water", ph: "Not Applicable",
+        classifications: ["Unknown"] },
+    };
+    const posted = await post(declarations);
+    expect(posted.status).toBe(201);
+    const receipt = await posted.json();
     const gemini = mockGemini(async (_resource, options) => {
       const raw = String(options?.body);
       for (const secret of [documented.a.notes, documented.conditions, receipt.trackingToken, env.ADMIN_PASSWORD]) {
@@ -844,19 +877,31 @@ describe("assessment and reviewer workflow", () => {
       }
       const body = JSON.parse(raw);
       const context = JSON.parse(body.contents[0].parts[0].text);
+      expect(context.recordedConditions.solutions).toMatchObject([
+        { side: "A", solvent: "Neat", purity: "99.99", ph: "-0.5", classifications: ["Organic", "Alcohol", "Other"],
+          customClassification: "Supplier grade", concentration: declarations.a.concentration, temperatureC: declarations.a.temperature },
+        { side: "B", solvent: "Other", customSolvent: "Deionized water", purity: null, ph: "Not Applicable",
+          classifications: ["Unknown"], quantity: declarations.b.quantity, state: declarations.b.state },
+      ]);
       expect(context.evidence).toEqual(expect.arrayContaining([
         expect.objectContaining({ source: "PubChem", excerpt: expect.stringContaining("C3H8O3") }),
         expect.objectContaining({ source: "NIOSH", excerpt: "Irritation" }),
         expect.objectContaining({ source: "NIOSH", title: "Glycerin (mist) · Solubility", excerpt: "Miscible" }),
       ]));
-      const findings = context.findings.map(({ code }: { code: string }) => code);
-      return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ findings }) }] } }] });
+      expect(context.waste.supportedClassifications).toEqual([]);
+      return geminiCompletion(options);
     });
     await scheduled();
     expect(gemini).toHaveBeenCalledOnce();
     const path = "requests/" + receipt.id;
     const detail = await (await adminCall(path)).json();
+    expect(detail.input).toEqual(declarations);
     expect(detail.report.scientificReport.origin).toBe("gemini");
+    expect(detail.report.wasteAssessment.classifications).toEqual(["Undetermined"]);
+    expect(detail.report.wasteAssessment.hazardReferenceIds).toEqual(expect.arrayContaining([
+      detail.evidence.find(({ excerpt }: { excerpt: string }) => excerpt === "Irritation").id,
+    ]));
+    expect(detail.report.wasteAssessment.missing).not.toContainEqual({ code: "ph", solution: "B" });
     expect(detail.report.scientificReport.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "occupationalHazards", basis: "retrieved", referenceIds: [expect.any(String)] }),
     ]));
@@ -865,6 +910,110 @@ describe("assessment and reviewer workflow", () => {
     expect(published.status).toBe("Rejected");
     expect(published.result).toBeUndefined();
     expect(JSON.stringify(published)).not.toContain(approvalNotes);
+  });
+
+  it.each(["modeled/categories", "reviewer-sourced/category"])("approves %s only with verified waste support", async (mode) => {
+    const sourceFetch = mockFetch.getMockImplementation()!;
+    mockFetch.mockImplementation((resource, options) => {
+      const url = new URL(String(resource));
+      const path = decodeURIComponent(url.pathname);
+      if (url.hostname === "pubchem.ncbi.nlm.nih.gov" && /\/compound\/name\/(Sodium chloride|7647-14-5)\//i.test(path)) {
+        return Promise.resolve(Response.json({ PropertyTable: { Properties: [{ CID: 5234, Title: "Sodium chloride", MolecularFormula: "NaCl" }] } }));
+      }
+      if (url.hostname === "pubchem.ncbi.nlm.nih.gov" && path.endsWith("/5234/JSON")) {
+        return Promise.resolve(Response.json({ Record: { RecordNumber: 5234, Section: [] } }));
+      }
+      return sourceFetch(resource, options);
+    });
+    env.AGENT_API_KEY = "test-gemini-key";
+    const gemini = mockGemini(async (_resource, options) => {
+      const request = JSON.parse(String(options?.body));
+      const context = JSON.parse(request.contents[0].parts[0].text);
+      expect(context.waste.supportedClassifications).toEqual(["Aqueous waste", "Inorganic waste"]);
+      expect(request.generationConfig.responseJsonSchema.properties.wasteClassifications.items.enum)
+        .toEqual(["Aqueous waste", "Inorganic waste", "Undetermined"]);
+      expect(context.calculation.molPerLPerIon).toBeCloseTo(0.0075, 12);
+      return geminiCompletion(options);
+    });
+    const salt = { ...sample, name: "Sodium chloride", cas: "7647-14-5", formula: "NaCl", solvent: "Water",
+      unit: "mol/L", quantityUnit: "mL", state: "Liquid", temperature: "25" };
+    const submission = await post({
+      a: { ...salt, concentration: "0.01", quantity: "300", classifications: ["Salt"], ph: "7.35" },
+      b: { ...salt, concentration: "0", quantity: "100", ph: "Unknown" },
+      conditions: "", calculation: { kind: "aqueous-sodium-chloride", assumptionsConfirmed: true,
+        finalVolume: { value: "400", unit: "mL" } },
+    });
+    expect(submission.status).toBe(201);
+    const receipt = await submission.json();
+    await Promise.all([scheduled(), scheduled()]);
+    expect(gemini).toHaveBeenCalledOnce();
+    const path = "requests/" + receipt.id;
+    const detail = await (await adminCall(path)).json();
+    expect(detail.report.wasteAssessment).toMatchObject({
+      basis: "aqueousSodiumChloride", classifications: ["Aqueous waste", "Inorganic waste"],
+      referenceIds: expect.arrayContaining(["method-1", detail.evidence[0].id]),
+      missing: expect.arrayContaining([{ code: "ph", solution: "B" }, { code: "mixtureHazards" }]),
+    });
+    const { referenceIds } = detail.report.wasteAssessment;
+    expect(referenceIds).toHaveLength(5);
+
+    const mixtureSource = { title: "Reviewer test fixture for the exact formulation", url: "https://example.org/formulation-study" };
+    const waste = { ...reviewedWaste, referenceIds, classifications: ["Aqueous waste", "Inorganic waste"],
+      justification: { en: "Reviewer verified the reported composition and edited this section.", ar: "تحقق المراجع من التركيبة وحرّر هذا القسم." } };
+    const result = { classification: "Insufficient information", conditions: "Documented conditions", hazards: [],
+      incompatibilities: [], storage: "Not assessed", container: "Not assessed", limitations: ["Mixture scope"],
+      evidenceIds: [detail.evidence[0].id], externalSources: [], attestation: true };
+    const decide = (wasteAssessment?: unknown) => adminCall(path + "/decision", {
+      runId: detail.run.id, decision: "Approved", notes: approvalNotes, result: { ...result, wasteAssessment },
+    });
+    expect((await decide()).status).toBe(400);
+    expect((await decide({ ...waste, attestation: false })).status).toBe(400);
+    expect((await decide({ ...waste, referenceIds: [...referenceIds, randomUUID()] })).status).toBe(400);
+    expect((await decide({ ...waste, referenceIds: [...referenceIds, "method-99"] })).status).toBe(400);
+    expect((await decide({ ...waste, referenceIds: [detail.evidence[0].id] })).status).toBe(400);
+    expect((await decide({ ...waste, classifications: ["Toxic waste"] })).status).toBe(400);
+    expect((await decide({ ...waste, classifications: ["Undetermined", "Aqueous waste"] })).status).toBe(400);
+    expect((await decide({ ...waste, classifications: ["Toxic waste"], mixtureSources: [
+      { title: "Constituent evidence", url: detail.evidence[0].url },
+    ] })).status).toBe(400);
+    expect(await (await track(receipt)).json()).not.toHaveProperty("result");
+
+    const reviewed = mode === "reviewer-sourced/category"
+      ? { ...waste, classifications: ["Aqueous waste", "Other"], mixtureSources: [mixtureSource] } : waste;
+    expect((await decide(reviewed)).status).toBe(200);
+    const published = await (await track(receipt)).json();
+    expect(published).toMatchObject({ status: "Approved", result: {
+      wasteAssessment: { classifications: reviewed.classifications, justification: reviewed.justification,
+        sources: expect.arrayContaining([expect.objectContaining({ url: detail.evidence[0].url }), ...reviewed.mixtureSources]) },
+    } });
+    expect(JSON.stringify(published)).not.toMatch(/supportedClassifications|referenceIds|hazardReferenceIds|attestation/);
+    expect((await (await adminCall(path)).json()).approvedResult).toEqual(published.result);
+    expect((await decide(reviewed)).status).toBe(409);
+  });
+
+  it("continues to read and approve records with a legacy input and stored draft", async () => {
+    const original = { ...documented, a: { ...documented.a, solvent: "Distilled water" } };
+    const receipt = await (await post(original)).json();
+    await scheduled();
+    const path = "requests/" + receipt.id;
+    const generated = await (await adminCall(path)).json();
+    expect(generated.input).toEqual(original);
+    const legacyReport = { ...generated.report };
+    delete legacyReport.wasteAssessment;
+    db.prepare("UPDATE public_assessment_drafts SET report_json = ? WHERE run_id = ?")
+      .run(JSON.stringify(legacyReport), generated.run.id);
+    expect((await (await adminCall(path)).json()).report).toEqual(legacyReport);
+    expect((await adminCall(path + "/decision", {
+      runId: generated.run.id, decision: "Approved", notes: approvalNotes,
+      result: { classification: "Insufficient information", conditions: "Legacy assessment", hazards: [], incompatibilities: [],
+        storage: "Not assessed", container: "Not assessed", limitations: ["Manual review"], evidenceIds: [generated.evidence[0].id],
+        externalSources: [], attestation: true },
+    })).status).toBe(200);
+    const published = await (await track(receipt)).json();
+    expect(published).toMatchObject({ status: "Approved", result: { conditions: "Legacy assessment" } });
+    expect(published.result).not.toHaveProperty("wasteAssessment");
+    await scheduled();
+    expect(await (await track(receipt)).json()).toEqual(published);
   });
 
   it.each(["slow success", "headers timeout", "body timeout"])("handles a Gemini %s with the 120-second deadline", async (scenario) => {
@@ -1130,7 +1279,7 @@ describe("assessment and reviewer workflow", () => {
         classification: "Insufficient information", conditions: "Documented sample specifications",
         hazards: [], incompatibilities: [], storage: "Not assessed", container: "Not assessed",
         limitations: ["No formulation-specific evidence"], evidenceIds: [privateDetail.evidence[0].id],
-        externalSources: [], attestation: true,
+        externalSources: [], wasteAssessment: reviewedWaste, attestation: true,
       },
     };
     expect((await adminCall(path + "/decision", { ...review, runId: randomUUID() })).status).toBe(400);

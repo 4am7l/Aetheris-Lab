@@ -1,4 +1,5 @@
 import { isSaltBalance } from "../../src/calculation";
+import { localizedLabel, submittedPhLabel } from "../../src/chemistryLabels";
 import { unknown } from "../../src/domain";
 import { scientificReferences, type AdminRequestDetail } from "../../src/review";
 import type { FindingCode, ScientificSectionInput, ScientificTopic } from "../../src/scientificReport";
@@ -85,7 +86,7 @@ const statements: Record<FindingCode, { en: string; ar: string }> = {
 const isolate = (text: string) => "\u2066" + text + "\u2069";
 const display = (value: number) => Number(value.toPrecision(6));
 
-function scientificData(code: FindingCode, request: AdminRequestDetail): string[] {
+function scientificData(code: FindingCode, request: AdminRequestDetail, language: "en" | "ar"): string[] {
   const report = request.report;
   const calc = report?.calculation;
   if (code === "saltDissociation") return ["NaCl(aq) → Na⁺(aq) + Cl⁻(aq)"];
@@ -95,6 +96,7 @@ function scientificData(code: FindingCode, request: AdminRequestDetail): string[
         input.temperature === unknown ? "" : input.temperature + " °C",
         input.concentration === unknown || input.unit === unknown ? "" : input.concentration + " " + input.unit,
         input.quantity === unknown || input.quantityUnit === unknown ? "" : input.quantity + " " + input.quantityUnit,
+        input.ph === undefined ? "" : localizedLabel("preMixingPh", language) + " " + submittedPhLabel(input.ph, language),
       ].filter(Boolean);
       return values.length ? [side + " · " + values.join(" · ")] : [];
     });
@@ -125,8 +127,8 @@ function scientificData(code: FindingCode, request: AdminRequestDetail): string[
   return [];
 }
 
-export function findingContent(code: FindingCode, request: AdminRequestDetail) {
-  const rows = scientificData(code, request);
+export function findingContent(code: FindingCode, request: AdminRequestDetail, language: "en" | "ar") {
+  const rows = scientificData(code, request, language);
   return { ...statements[code], rows };
 }
 
@@ -134,12 +136,13 @@ export function prepareScientificSections(request: AdminRequestDetail): Scientif
   const grouped = new Map<ScientificTopic, ScientificSectionInput>();
   const references = scientificReferences(request.evidence, request.report?.calculation);
   for (const { code, topic, referenceIds } of request.report?.scientificReport?.findings ?? []) {
-    const { en, ar, rows } = findingContent(code, request);
+    const english = findingContent(code, request, "en");
+    const arabic = findingContent(code, request, "ar");
     const previous = grouped.get(topic);
     grouped.set(topic, {
       topic,
-      en: [previous?.en, en, ...rows].filter(Boolean).join("\n"),
-      ar: [previous?.ar, ar, ...rows.map(isolate)].filter(Boolean).join("\n"),
+      en: [previous?.en, english.en, ...english.rows].filter(Boolean).join("\n"),
+      ar: [previous?.ar, arabic.ar, ...arabic.rows.map(isolate)].filter(Boolean).join("\n"),
       referenceIds: [...new Set([...(previous?.referenceIds ?? []), ...referenceIds])].filter((id) => references.has(id)),
     });
   }

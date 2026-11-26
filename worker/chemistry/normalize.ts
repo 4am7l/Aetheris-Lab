@@ -1,4 +1,4 @@
-import { unknown, type Solution } from "../../src/domain";
+import { solventName, unknown, type Solution } from "../../src/domain";
 
 export const methanol = {
   cid: 887, names: ["methanol", "methyl alcohol", "meoh", "ميثانول", "الميثانول", "كحول الميثيل"],
@@ -39,7 +39,7 @@ export function normalizeSolution(solution: Solution) {
   const quantity = valueOf(solution.quantity);
   const concentration = valueOf(solution.concentration);
   const celsius = valueOf(solution.temperature);
-  const solvent = normalizedText(solution.solvent).toLowerCase();
+  const solvent = normalizedText(solventName(solution)).toLowerCase();
   return {
     solvent: solution.solvent === unknown ? null : water.names.includes(solvent) ? water.cid : solvent,
     state: solution.state === unknown ? null : solution.state,

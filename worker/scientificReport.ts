@@ -2,6 +2,7 @@ import { isSaltBalance } from "../src/calculation";
 import type { RequestInput } from "../src/domain";
 import type { Evidence, PreliminaryReport } from "../src/review";
 import type { FindingCode, ScientificDraft, ScientificFinding } from "../src/scientificReport";
+import { assessWasteEvidence } from "./wasteAssessment";
 
 type Finding = ScientificFinding & { required?: true };
 type SourceTopic = "properties" | "solubility" | "compatibility" | "fire" | "exposure" | "environment";
@@ -76,7 +77,10 @@ export function scientificContext(input: RequestInput, report: PreliminaryReport
   add("uncertainty", "substanceScope", "limitation");
   add("safety", "reviewRequired", "interpretation");
 
-  const included = new Set(candidates.flatMap(({ referenceIds }) => referenceIds));
+  const waste = assessWasteEvidence(input, report, usable);
+  const included = new Set([
+    ...candidates.flatMap(({ referenceIds }) => referenceIds), ...waste.referenceIds, ...waste.hazardReferenceIds,
+  ]);
   return {
     candidates,
     data: {
@@ -88,8 +92,24 @@ export function scientificContext(input: RequestInput, report: PreliminaryReport
       recordedConditions: {
         notesPresent: Boolean(input.conditions.trim() || input.a.notes.trim() || input.b.notes.trim()),
         states: [input.a.state, input.b.state],
+        solutions: ([["A", input.a], ["B", input.b]] as const).map(([side, solution]) => ({
+          side,
+          solvent: solution.solvent,
+          customSolvent: solution.customSolvent,
+          purity: solution.purity ?? null,
+          ph: solution.ph ?? null,
+          classifications: solution.classifications ?? [],
+          customClassification: solution.customClassification,
+          concentration: solution.concentration,
+          concentrationUnit: solution.unit,
+          quantity: solution.quantity,
+          quantityUnit: solution.quantityUnit,
+          temperatureC: solution.temperature,
+          state: solution.state,
+        })),
       },
       calculation,
+      waste,
       evidence: usable.filter(({ id }) => included.has(id)).map(({ id, source, kind, solution, title, excerpt }) => ({
         id, source, kind, solution, title,
         // References about reactivity can contain procedures. Their presence is sufficient for classification.

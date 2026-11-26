@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { reviewedScienceSchema } from "./scientificReport";
+import { reviewedWasteAssessmentSchema } from "./wasteAssessment";
 export const statuses = [
   "Draft",
   "Submitted",
@@ -14,6 +15,33 @@ export const statuses = [
 ] as const;
 export type RequestStatus = (typeof statuses)[number];
 export const unknown = "Unknown";
+export const notApplicable = "Not Applicable";
+export const solventOptions = ["Water", "Neat", "Pure", "Unknown", "Other"] as const;
+export type SolventOption = typeof solventOptions[number];
+export const chemicalClassifications = [
+  "Organic", "Inorganic", "Acid", "Base", "Salt", "Oxidizing agent", "Reducing agent", "Alcohol",
+  "Hydrocarbon", "Halogenated compound", "Non-halogenated compound", "Metal-containing compound", "Other", "Unknown",
+] as const;
+export type ChemicalClassification = typeof chemicalClassifications[number];
+
+export function solventOption(value: string): SolventOption {
+  return solventOptions.find((option) => option === value) ?? "Other";
+}
+
+export function hasPurity(solvent: string) {
+  return solvent === "Pure" || solvent === "Neat";
+}
+
+export function solventName({ solvent, customSolvent }: Pick<Solution, "solvent" | "customSolvent">) {
+  return solvent === "Other" ? customSolvent ?? solvent : solvent;
+}
+
+const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+const finiteDecimal = (value: string) => decimal.test(value) && Number.isFinite(Number(value));
+const submittedNumber = z.string().trim().max(64).transform((value) => value
+  .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+  .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+  .replaceAll("٫", ".").replaceAll("−", "-"));
 const knownOrUnknown = z
   .string()
   .trim()
@@ -50,7 +78,17 @@ export const solutionSchema = z
     ),
     concentration: numberOrUnknown,
     unit: z.enum(["% w/w", "% v/v", "mol/L", "g/L", "Unknown"]),
+    // Any previously stored free-text solvent name remains valid.
     solvent: knownOrUnknown,
+    customSolvent: z.string().trim().min(1).max(200).optional(),
+    purity: submittedNumber.refine((value) => value === unknown ||
+      (finiteDecimal(value) && Number(value) >= 0 && Number(value) <= 100),
+    "Enter a purity percentage from 0 to 100 or Unknown.").optional(),
+    ph: submittedNumber.refine((value) => value === unknown || value === notApplicable || finiteDecimal(value),
+      "Enter a decimal pH, Unknown, or Not Applicable.").optional(),
+    classifications: z.array(z.enum(chemicalClassifications)).max(chemicalClassifications.length)
+      .refine((values) => new Set(values).size === values.length).optional(),
+    customClassification: z.string().trim().min(1).max(200).optional(),
     state: z.enum(["Liquid", "Solid", "Gas", "Unknown"]),
     temperature: z
       .string()
@@ -67,6 +105,15 @@ export const solutionSchema = z
     source: z.enum(["Manual entry", "NIOSH catalog"]),
   })
   .superRefine((v, c) => {
+    if (v.customSolvent !== undefined && v.solvent !== "Other") {
+      c.addIssue({ code: "custom", path: ["customSolvent"], message: "Select Other to specify a solvent name." });
+    }
+    if (v.purity !== undefined && !hasPurity(v.solvent)) {
+      c.addIssue({ code: "custom", path: ["purity"], message: "Select Pure or Neat to specify purity." });
+    }
+    if (v.customClassification !== undefined && !v.classifications?.includes("Other")) {
+      c.addIssue({ code: "custom", path: ["customClassification"], message: "Select Other to specify a classification." });
+    }
     if (v.concentration !== unknown && v.unit === "Unknown")
       c.addIssue({
         code: "custom",
@@ -99,9 +146,7 @@ export const blankSolution: Solution = {
   notes: "",
   source: "Manual entry",
 };
-const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
-export const dilutionVolumeSchema = z.string().trim().max(64)
-  .refine((value) => decimal.test(value) && Number.isFinite(Number(value)));
+export const dilutionVolumeSchema = z.string().trim().max(64).refine(finiteDecimal);
 export const calculationInputSchema = z.strictObject({
   kind: z.enum(["aqueous-dilution", "aqueous-sodium-chloride"]),
   assumptionsConfirmed: z.literal(true),
@@ -196,6 +241,7 @@ export const finalResultSchema = z.object({
   container: z.string(),
   limitations: z.array(z.string()).min(1),
   scientificReport: reviewedScienceSchema.optional(),
+  wasteAssessment: reviewedWasteAssessmentSchema.optional(),
   sources: z
     .array(
       z.object({

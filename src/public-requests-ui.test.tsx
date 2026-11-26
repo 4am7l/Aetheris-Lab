@@ -12,7 +12,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { blankSolution } from "./domain";
+import { blankSolution, solventOptions } from "./domain";
 import { ar, en } from "./i18n";
 import Analysis from "./pages/Analysis";
 import Receipt from "./pages/Receipt";
@@ -125,8 +125,8 @@ describe("real submission", () => {
       headers: { "Content-Type": "application/json" },
     });
     expect(JSON.parse(request?.body as string)).toEqual({
-      a: { ...blankSolution, name: "Sample A" },
-      b: { ...blankSolution, name: "Sample B" },
+      a: { ...blankSolution, name: "Sample A", ph: "Unknown" },
+      b: { ...blankSolution, name: "Sample B", ph: "Unknown" },
       conditions: "Room temperature",
     });
     expect(
@@ -162,6 +162,70 @@ describe("real submission", () => {
     ).toBe(token);
     expect(screen.getByLabelText("Current URL").textContent).toBe(receiptPath);
     expect(document.body.textContent).not.toContain(token);
+  });
+
+  it.each(solventOptions)("keeps pH available for the %s solvent selection", (solvent) => {
+    mount();
+    const dialog = within(enterSolution("A", "Sample A"));
+    const selection = dialog.getByRole<HTMLSelectElement>("combobox", { name: en.solvent });
+    expect([...selection.options].map((option) => option.value)).toEqual(["Water", "Neat", "Pure", "Unknown", "Other"]);
+    fireEvent.change(selection, { target: { value: solvent } });
+    expect(Boolean(dialog.queryByRole("textbox", { name: en.purity }))).toBe(solvent === "Neat" || solvent === "Pure");
+    expect(Boolean(dialog.queryByRole("textbox", { name: en.customSolvent }))).toBe(solvent === "Other");
+    const ph = dialog.getByRole<HTMLSelectElement>("combobox", { name: en.phStatus });
+    expect([...ph.options].map((option) => option.value)).toEqual(["Unknown", "Not Applicable", "manual"]);
+    fireEvent.change(ph, { target: { value: "manual" } });
+    expect(dialog.getByRole("textbox", { name: en.preMixingPh })).toBeTruthy();
+    expect(dialog.queryByText(en.chemicalWasteAssessment)).toBeNull();
+  });
+
+  it("submits different Pure and Neat declarations, including unknown purity and inapplicable pH", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "INVALID_REQUEST" }, { status: 400 }));
+    mount();
+    const a = within(enterSolution("A", "Sample A"));
+    fireEvent.change(a.getByRole("combobox", { name: en.solvent }), { target: { value: "Pure" } });
+    const purity = a.getByRole<HTMLInputElement>("textbox", { name: en.purity });
+    expect(purity.value).toBe("");
+    expect(purity.placeholder).toBe(en.unknown);
+    fireEvent.change(purity, { target: { value: "101" } });
+    fireEvent.click(a.getByRole("button", { name: en.confirm }));
+    expect(a.getByText(en.purityInvalid)).toBeTruthy();
+    fireEvent.change(purity, { target: { value: "98.5" } });
+    fireEvent.change(a.getByRole("combobox", { name: en.phStatus }), { target: { value: "manual" } });
+    fireEvent.change(a.getByRole("textbox", { name: en.preMixingPh }), { target: { value: "-0.25" } });
+    for (const name of ["Organic", "Alcohol", "Other"]) fireEvent.click(a.getByRole("checkbox", { name }));
+    fireEvent.change(a.getByRole("textbox", { name: en.customClassification }), { target: { value: "Supplier grade" } });
+    fireEvent.click(a.getByRole("button", { name: en.confirm }));
+
+    const b = within(enterSolution("B", "Sample B"));
+    fireEvent.change(b.getByRole("combobox", { name: en.solvent }), { target: { value: "Neat" } });
+    expect(b.getByRole<HTMLInputElement>("textbox", { name: en.purity }).value).toBe("");
+    fireEvent.change(b.getByRole("combobox", { name: en.phStatus }), { target: { value: "Not Applicable" } });
+    fireEvent.click(b.getByRole("checkbox", { name: "Salt" }));
+    fireEvent.click(b.getByRole("button", { name: en.confirm }));
+    fireEvent.click(screen.getByRole("button", { name: en.submitRequest }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      a: { solvent: "Pure", purity: "98.5", ph: "-0.25", classifications: ["Organic", "Alcohol", "Other"], customClassification: "Supplier grade" },
+      b: { solvent: "Neat", purity: "Unknown", ph: "Not Applicable", classifications: ["Salt"] },
+    });
+  });
+
+  it("localizes the classified inputs and accepts an independent custom solvent name in Arabic", () => {
+    mount("/analysis", "ar");
+    const card = screen.getByRole("heading", { name: `${ar.solution} A` }).closest("section")!;
+    fireEvent.click(within(card).getByRole("button", { name: ar.manual }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByRole("textbox", { name: ar.name }), { target: { value: "عيّنة" } });
+    const solvent = dialog.getByRole<HTMLSelectElement>("combobox", { name: ar.solvent });
+    expect([...solvent.options].map(({ text }) => text)).toEqual(["الماء", "غير مخفّف", "نقي", "غير معروف", "أخرى"]);
+    fireEvent.change(solvent, { target: { value: "Other" } });
+    fireEvent.change(dialog.getByRole("textbox", { name: ar.customSolvent }), { target: { value: "مذيب موثق" } });
+    expect(dialog.getByRole("group", { name: ar.chemicalClassification })).toBeTruthy();
+    expect(dialog.getByRole("option", { name: ar.notApplicable })).toBeTruthy();
+    expect(dialog.queryByText(ar.chemicalWasteAssessment!)).toBeNull();
+    fireEvent.click(dialog.getByRole("button", { name: ar.confirm }));
+    expect(within(card).getByText("أخرى · مذيب موثق")).toBeTruthy();
   });
 
   it("submits the measured final volume only after an explicit dilution declaration", async () => {
@@ -280,6 +344,14 @@ describe("receipt tracking", () => {
         ar: "التركيز المراجع · \u20660.0075 mol/L\u2069",
         sources: [{ title: "Method reference", url: "https://webbook.nist.gov/cgi/cbook.cgi?ID=C7647145" }],
       }],
+      wasteAssessment: {
+        classifications: ["Aqueous waste", "Inorganic waste", "Corrosive waste"],
+        justification: { en: "Reviewer-edited waste justification", ar: "التعليل الذي راجعه المختص" },
+        hazards: { en: "Reviewed hazard data", ar: "بيانات الخطورة المراجعة" },
+        limitations: { en: "Reviewed waste limits", ar: "القيود المراجعة" },
+        missingInformation: { en: "Remaining waste evidence gaps", ar: "الأدلة الناقصة" },
+        sources: [{ title: "Reviewed mixture reference", url: "https://example.org/mixture" }],
+      },
       reviewedAt: receipt.updatedAt,
     };
     saveReceipt({ ...receipt, trackingToken: token });
@@ -290,12 +362,18 @@ describe("receipt tracking", () => {
     expect(screen.getByText(en.noVerdict)).toBeTruthy();
     expect(screen.queryByText(result.conditions)).toBeNull();
     expect(screen.queryByText(result.scientificReport[0].en)).toBeNull();
+    expect(screen.queryByRole("heading", { name: en.chemicalWasteAssessment })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: en.refreshReceipt }));
     expect(await screen.findByRole("heading", { name: en.insufficientResult })).toBeTruthy();
     expect(screen.getByText(result.conditions)).toBeTruthy();
     expect(screen.getByText(result.scientificReport[0].en)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Method reference" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: en.chemicalWasteAssessment })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: en.wasteSegregation })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: en.wasteHazardCharacteristics })).toBeTruthy();
+    expect(screen.getByText(result.wasteAssessment.justification.en)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Reviewed mixture reference" })).toBeTruthy();
     expect(screen.queryByText(en.noVerdict)).toBeNull();
     expect(localStorage.getItem(storageKey)).not.toContain(result.conditions);
     expect(document.body.textContent).not.toContain(token);
@@ -304,6 +382,9 @@ describe("receipt tracking", () => {
     mount(receiptPath, "ar");
     expect((await screen.findByText(result.scientificReport[0].ar)).getAttribute("dir")).toBe("rtl");
     expect(screen.queryByText(result.scientificReport[0].en)).toBeNull();
+    expect(screen.getByRole("heading", { name: ar.chemicalWasteAssessment })).toBeTruthy();
+    expect(screen.getByText("نفايات مائية")).toBeTruthy();
+    expect(screen.getByText(result.wasteAssessment.justification.ar).getAttribute("dir")).toBe("rtl");
   });
 
   it("uses the saved token after remount and removes it on confirmation", async () => {

@@ -6,6 +6,7 @@ import { calculate } from "./chemistry";
 import { GeminiFailure, geminiTimeoutMs } from "./gemini";
 import { assembleScientificReport, scientificContext } from "./scientificReport";
 import { scientificSources } from "./sources";
+import { assembleWasteDraft } from "./wasteAssessment";
 
 type AgentEnv = AIConfig & { DB: D1Database; AGENT_ENABLED?: string };
 type End = Exclude<AgentStatus, "running">;
@@ -90,8 +91,9 @@ export async function processNextRequest(env: AgentEnv) {
       calculation,
     };
     if (!input.conditions.trim() && !input.calculation) report.gaps.push({ code: "conditions" });
-    const context = provider?.name === "openai" ? null : scientificContext(input, report, evidence);
-    if (context) {
+    const context = scientificContext(input, report, evidence);
+    report.wasteAssessment = assembleWasteDraft(context.data.waste);
+    if (provider?.name !== "openai") {
       report.scientificReport = assembleScientificReport(
         context, context.candidates.map(({ code }) => code), "evidence-review",
       );
@@ -99,15 +101,14 @@ export async function processNextRequest(env: AgentEnv) {
     // Save the evidence-only draft before dispatch so it survives a canceled invocation.
     if (!await saveEvidence(db, runId, evidence, report)) return;
 
-    if (provider?.name === "gemini" && context && (context.data.evidence.length || calculation.status === "calculated")) {
+    if (provider?.name === "gemini" && (context.data.evidence.length || calculation.status === "calculated")) {
       if (leaseUntil - Date.now() < geminiTimeoutMs + finalWriteMarginMs) {
         status = "failed";
         failure = "LEASE_INSUFFICIENT";
         console.warn({ event: "assessment_lease_insufficient", runId });
       } else {
         try {
-          const scientificReport = await provider.assess(context, runId);
-          assessedReport = { ...report, scientificReport };
+          assessedReport = { ...report, ...await provider.assess(context, runId) };
         } catch (cause) {
           status = "failed";
           failure = cause instanceof GeminiFailure ? cause.code : "AI_UNAVAILABLE";
