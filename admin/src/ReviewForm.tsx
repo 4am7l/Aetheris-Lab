@@ -7,6 +7,8 @@ import { useState, type FormEvent } from "react";
 import { finalResultSchema, type PublicResult } from "../../src/domain";
 import { reviewInputSchema, type AdminRequestDetail, type ReviewDecision } from "../../src/review";
 import { resultLabel } from "../../src/reviewText";
+import type { ScientificSectionInput } from "../../src/scientificReport";
+import { ScientificSectionEditor } from "./ScientificSectionEditor";
 import { useAdminText as useText } from "./text";
 import { Notice } from "../../src/ui";
 
@@ -34,6 +36,7 @@ export function ReviewForm({ request, busy, onSubmit }: {
   const [classification, setClassification] = useState<PublicResult["classification"]>("Insufficient information");
   const [selected, setSelected] = useState<string[]>([]);
   const [externalSources, setExternalSources] = useState<{ title: string; url: string }[]>([]);
+  const [scientificSections, setScientificSections] = useState<ScientificSectionInput[]>([]);
   const [attestation, setAttestation] = useState(false);
   const [invalid, setInvalid] = useState(false);
   const approval = decision === "Approved";
@@ -51,6 +54,7 @@ export function ReviewForm({ request, busy, onSubmit }: {
         incompatibilities: items(fields.incompatibilities),
         limitations: items(fields.limitations),
         evidenceIds: selected, externalSources, attestation,
+        ...(scientificSections.length ? { scientificSections } : {}),
       },
     } : base);
     const needsMixtureSource = approval && classification === "Compatible under documented conditions" && !externalSources.length;
@@ -126,6 +130,7 @@ export function ReviewForm({ request, busy, onSubmit }: {
                   {t("addReference")}
                 </Button>
               </div>}
+              <ScientificSectionEditor request={request} sections={scientificSections} onChange={setScientificSections} />
               <FormControlLabel label={t("reviewAttestation")}
                 control={<Checkbox checked={attestation} onChange={(_, checked) => setAttestation(checked)} />} />
             </>

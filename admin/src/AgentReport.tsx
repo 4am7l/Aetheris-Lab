@@ -1,4 +1,6 @@
 import type { AdminRequestDetail, Evidence, GapCode } from "../../src/review";
+import CalculationReport from "./CalculationReport";
+import { ScientificAssessment } from "./ScientificAssessment";
 import type { AdminTextKey } from "./i18n";
 import { useAdminText as useText } from "./text";
 import { Notice } from "../../src/ui";
@@ -43,12 +45,16 @@ export function AgentReport({ request }: { request: AdminRequestDetail }) {
       {!run && <Notice>{t("agentWaiting")}</Notice>}
       {run?.status === "running" && <Notice>{t("agentRunning")}</Notice>}
       {run?.status === "unconfigured" && <Notice kind="warning">{t("agentUnconfigured")}</Notice>}
+      {run?.status === "completed" && run.provider === "gemini" && report?.scientificReport?.origin === "evidence-review" &&
+        <Notice>{t("insufficientGrounding")}</Notice>}
       {run?.status === "failed" && <Notice kind="warning">
         {t("agentFailed")} {run.failureCode && <bdi className="small mono">{run.failureCode}</bdi>}
       </Notice>}
       {report && (
         <>
           <Notice kind="warning">{t("preliminaryCaution")}</Notice>
+          <ScientificAssessment request={request} />
+          {report.calculation && <CalculationReport report={report.calculation} explanation={report.calculationExplanation} />}
           <div className="admin-grid">
             <section>
               <h3>{t("catalogMatches")}</h3>
@@ -100,7 +106,7 @@ export function AgentReport({ request }: { request: AdminRequestDetail }) {
         <h3>{t("retrievedEvidence")}</h3>
         {evidence.length === 0 && <p className="muted">{t("noRetrievedEvidence")}</p>}
         {evidence.map((item) => (
-          <article className="admin-evidence" key={item.id}>
+          <article className="admin-evidence" key={item.id} id={"evidence-" + item.id}>
             <div className="small muted">{t("solution")} {item.solution} · <bdi>{item.source}</bdi></div>
             <EvidenceLink evidence={item} />
             <p dir="auto">{item.excerpt}</p>

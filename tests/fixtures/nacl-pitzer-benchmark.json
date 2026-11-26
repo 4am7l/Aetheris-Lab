@@ -1,0 +1,122 @@
+{
+  "reference": {
+    "engineVersion": "3.7.3-15968",
+    "databaseUrl": "https://raw.githubusercontent.com/phreeqc-dev/phreeqc3/84971d373c2870eb8e82c0a3c7673df84429f86d/database/pitzer.dat",
+    "databaseSha256Lf": "3895bc5caf3f843abbb6deade72c9515c2be1c2efa3dd57052d0bb10cba68996"
+  },
+  "relativeTolerance": 1e-06,
+  "cases": [
+    {
+      "id": "unequal aliquots and mass-to-molar conversion",
+      "stocks": [
+        {
+          "concentration": "0.58443",
+          "unit": "g/L",
+          "quantity": "100",
+          "quantityUnit": "mL"
+        },
+        {
+          "concentration": "0.002",
+          "unit": "mol/L",
+          "quantity": "0.4",
+          "quantityUnit": "L"
+        }
+      ],
+      "finalVolumeMl": 499,
+      "sodium": {
+        "amountMol": 0.0017999999995440882,
+        "concentrationMolL": 0.0036072144279440644
+      },
+      "chloride": {
+        "amountMol": 0.001799999999544101,
+        "concentrationMolL": 0.00360721442794409
+      },
+      "haliteMoles": 0.0,
+      "haliteSi": -6.522846958492053
+    },
+    {
+      "id": "explicit zero stock",
+      "stocks": [
+        {
+          "concentration": "0.01",
+          "unit": "mol/L",
+          "quantity": "300",
+          "quantityUnit": "mL"
+        },
+        {
+          "concentration": "0",
+          "unit": "mol/L",
+          "quantity": "100",
+          "quantityUnit": "mL"
+        }
+      ],
+      "finalVolumeMl": 400,
+      "sodium": {
+        "amountMol": 0.0029999999986816024,
+        "concentrationMolL": 0.007499999996704006
+      },
+      "chloride": {
+        "amountMol": 0.0029999999986816055,
+        "concentrationMolL": 0.007499999996704013
+      },
+      "haliteMoles": 0.0,
+      "haliteSi": -5.907505682488099
+    },
+    {
+      "id": "lower concentration bound",
+      "stocks": [
+        {
+          "concentration": "0.000001",
+          "unit": "mol/L",
+          "quantity": "50",
+          "quantityUnit": "mL"
+        },
+        {
+          "concentration": "0.000001",
+          "unit": "mol/L",
+          "quantity": "0.15",
+          "quantityUnit": "L"
+        }
+      ],
+      "finalVolumeMl": 200,
+      "sodium": {
+        "amountMol": 2.0000000002381517e-07,
+        "concentrationMolL": 1.0000000001190758e-06
+      },
+      "chloride": {
+        "amountMol": 2.0000000002381517e-07,
+        "concentrationMolL": 1.0000000001190758e-06
+      },
+      "haliteMoles": 0.0,
+      "haliteSi": -13.58010294084584
+    },
+    {
+      "id": "upper concentration and stock volume bounds",
+      "stocks": [
+        {
+          "concentration": "0.01",
+          "unit": "mol/L",
+          "quantity": "10",
+          "quantityUnit": "L"
+        },
+        {
+          "concentration": "0.01",
+          "unit": "mol/L",
+          "quantity": "10000",
+          "quantityUnit": "mL"
+        }
+      ],
+      "finalVolumeMl": 20000,
+      "sodium": {
+        "amountMol": 0.19999999991210582,
+        "concentrationMolL": 0.009999999995605292
+      },
+      "chloride": {
+        "amountMol": 0.1999999999121057,
+        "concentrationMolL": 0.009999999995605285
+      },
+      "haliteMoles": 0.0,
+      "haliteSi": -5.668205345607285
+    }
+  ]
+}

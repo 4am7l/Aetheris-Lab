@@ -4,3 +4,5 @@ export const TextContext = createContext<(key: TextKey) => string>(
   (key) => en[key],
 );
 export const useText = () => useContext(TextContext);
+export const LanguageContext = createContext<"en" | "ar">("en");
+export const useLanguage = () => useContext(LanguageContext);

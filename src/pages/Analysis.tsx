@@ -1,12 +1,13 @@
 import Checkbox from "@mui/material/Checkbox";
 import FormControlLabel from "@mui/material/FormControlLabel";
+import MenuItem from "@mui/material/MenuItem";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
 import { useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { SolutionCard, type ImageAttachment } from "../components/SolutionCard";
-import type { Solution } from "../domain";
+import { dilutionVolumeSchema, type RequestInput, type Solution } from "../domain";
 import { saveLocalRequest } from "../services/local";
 import { RequestError, submitRequest } from "../services/publicRequests";
 import { useRetryDelay } from "../services/useRetryDelay";
@@ -25,6 +26,9 @@ export default function Analysis() {
   const [imageB, setImageB] = useState<ImageAttachment | null>(null);
   const [attachPhotos, setAttachPhotos] = useState(false);
   const [conditions, setConditions] = useState("");
+  const [calculationKind, setCalculationKind] = useState<NonNullable<RequestInput["calculation"]>["kind"]>();
+  const [finalVolume, setFinalVolume] = useState("");
+  const [finalVolumeUnit, setFinalVolumeUnit] = useState<"L" | "mL">("mL");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<RequestError>();
   const [confirmRetry, setConfirmRetry] = useState(false);
@@ -53,10 +57,19 @@ export default function Analysis() {
     [imageB],
   );
 
+  const invalidVolume = Boolean(calculationKind && finalVolume.trim()) && !dilutionVolumeSchema.safeParse(finalVolume).success;
+  const input: RequestInput | undefined = a && b ? {
+    a, b, conditions,
+    ...(calculationKind ? { calculation: {
+      kind: calculationKind, assumptionsConfirmed: true,
+      ...(finalVolume.trim() ? { finalVolume: { value: finalVolume, unit: finalVolumeUnit } } : {}),
+    } } : {}),
+  } : undefined;
+
   function saveDraft() {
-    if (!a || !b || inFlight.current) return;
+    if (!input || invalidVolume || inFlight.current) return;
     try {
-      const draft = saveLocalRequest({ a, b, conditions });
+      const draft = saveLocalRequest(input);
       void client.invalidateQueries({ queryKey: ["requests"] });
       navigate("/requests/" + draft.id);
     } catch {
@@ -65,7 +78,7 @@ export default function Analysis() {
   }
 
   async function submit() {
-    if (!a || !b || inFlight.current || cooldown) return;
+    if (!input || invalidVolume || inFlight.current || cooldown) return;
     // Lock synchronously before React renders the disabled button.
     inFlight.current = true;
     setConfirmRetry(false);
@@ -74,7 +87,7 @@ export default function Analysis() {
     setDraftError(false);
     try {
       const id = await submitRequest(
-        { a, b, conditions },
+        input,
         attachPhotos ? { imageA: imageA?.file, imageB: imageB?.file } : undefined,
       );
       if (active.current)
@@ -131,6 +144,35 @@ export default function Analysis() {
             slotProps={{ htmlInput: { maxLength: 3000 } }}
           />
           <p className="small muted">{t("unknownFields")}</p>
+          <FormControlLabel
+            label={t("dilutionOptIn")}
+            control={<Checkbox checked={calculationKind === "aqueous-dilution"}
+              onChange={(_, checked) => setCalculationKind(checked ? "aqueous-dilution" : undefined)}
+              slotProps={{ input: { "aria-describedby": "dilution-assumptions" } }} />}
+          />
+          <p id="dilution-assumptions" className="small muted">{t("dilutionAssumptions")}</p>
+          <FormControlLabel
+            label={t("saltOptIn")}
+            control={<Checkbox checked={calculationKind === "aqueous-sodium-chloride"}
+              onChange={(_, checked) => setCalculationKind(checked ? "aqueous-sodium-chloride" : undefined)}
+              slotProps={{ input: { "aria-describedby": "salt-assumptions" } }} />}
+          />
+          <p id="salt-assumptions" className="small muted">{t("saltAssumptions")}</p>
+          {calculationKind && <div className="form-grid">
+            <TextField
+              label={t("dilutionFinalVolume")}
+              value={finalVolume}
+              onChange={(event) => setFinalVolume(event.target.value)}
+              error={invalidVolume}
+              helperText={invalidVolume ? t("dilutionVolumeInvalid") : undefined}
+              slotProps={{ htmlInput: { inputMode: "decimal", maxLength: 64 } }}
+            />
+            <TextField select label={t("dilutionFinalVolumeUnit")} value={finalVolumeUnit}
+              onChange={(event) => setFinalVolumeUnit(event.target.value === "L" ? "L" : "mL")}>
+              <MenuItem value="mL">mL</MenuItem>
+              <MenuItem value="L">L</MenuItem>
+            </TextField>
+          </div>}
         </section>
       </fieldset>
       <section className="submission-panel" aria-busy={pending}>
@@ -147,7 +189,7 @@ export default function Analysis() {
         )}
         <Button
           variant="contained"
-          disabled={!a || !b || pending || cooldown}
+          disabled={!input || invalidVolume || pending || cooldown}
           onClick={() =>
             failure?.code === "unconfirmed"
               ? setConfirmRetry(true)
@@ -179,7 +221,7 @@ export default function Analysis() {
         <p>{t("localNotice")}</p>
         <Button
           variant="outlined"
-          disabled={!a || !b || pending}
+          disabled={!input || invalidVolume || pending}
           onClick={saveDraft}
         >
           <Icon name="save" />

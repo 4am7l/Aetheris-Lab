@@ -9,6 +9,8 @@ const compoundSchema = z.object({
   CID: z.int().positive(),
   Title: z.string().min(1).max(500),
   MolecularFormula: z.string().min(1).max(500),
+  MolecularWeight: z.string().regex(/^\d+(?:\.\d+)?$/).max(20).optional().catch(undefined),
+  ConnectivitySMILES: z.string().min(1).max(360).optional().catch(undefined),
 });
 type Compound = z.infer<typeof compoundSchema>;
 type Citation = Pick<Evidence, "source" | "kind" | "title" | "url" | "excerpt">;
@@ -49,7 +51,7 @@ async function compounds(namespace: "name" | "fastformula", identifier: string) 
   const query = namespace === "fastformula" ? "?MaxRecords=3" : "";
   const data = await retrieve(
     pubchem + "/rest/pug/compound/" + namespace + "/" + encodeURIComponent(identifier)
-      + "/property/Title,MolecularFormula/JSON" + query, 128 * 1024,
+      + "/property/Title,MolecularFormula,MolecularWeight,ConnectivitySMILES/JSON" + query, 128 * 1024,
   );
   if (!data) return [];
   return z.object({ PropertyTable: z.object({ Properties: z.array(compoundSchema) }) })
@@ -71,6 +73,7 @@ async function identityOf(solution: Solution) {
   let records = candidates;
   let conflict = Boolean(byCas.length && byName.length &&
     !byCas.some((candidate) => byName.some(({ CID }) => candidate.CID === CID)));
+  conflict ||= Boolean(formula && embeddedFormula && formula !== embeddedFormula);
   if (byCas.length && byName.length && !conflict) {
     records = byCas.filter((candidate) => byName.some(({ CID }) => candidate.CID === CID));
   }
@@ -81,12 +84,12 @@ async function identityOf(solution: Solution) {
   }
   if (!candidates.length && formulaText) records = await compounds("fastformula", formulaText);
   if (conflict) records = [...new Map([...byCas, ...byName].map((record) => [record.CID, record])).values()];
-  // A formula can represent isomers or different products even if a search returns one hit.
-  const state = records.length === 0 ? "missing"
-    : records.length !== 1 || conflict || !candidates.length ? "ambiguous" : "matched";
   const unverified = (cas !== unknown && !byCas.length)
     || (usableName && !embeddedFormula && !byName.length)
     || (solution.formula !== unknown && !formula);
+  // Every supplied identifier must corroborate the match. Formula-only lookup stays ambiguous.
+  const state = records.length === 0 ? "missing"
+    : records.length !== 1 || conflict || unverified || !candidates.length ? "ambiguous" : "matched";
   return { records, state, cas, unverified } as const;
 }
 
@@ -121,16 +124,18 @@ async function pubchemSafety(record: Compound): Promise<Citation[]> {
     for (const entry of section.Information ?? []) {
       const kind = incompatibilityHeadings.has(heading) ? "incompatibility"
         : heading === "GHS Classification" && entry.Name === "GHS Hazard Statements" ? "hazard" : null;
-      if (!kind || found.filter((evidence) => evidence.kind === kind).length >= 3) continue;
-      for (const line of (entry.Value?.StringWithMarkup ?? []).slice(0, 3)) {
+      if (!kind) continue;
+      for (const line of (entry.Value?.StringWithMarkup ?? []).slice(0, 18)) {
         const excerpt = line.String.replace(/\s+/g, " ").trim().slice(0, 900);
         if (!excerpt || (kind === "hazard" && !/^H\d{3}[a-z]*(?:\s|:|\+|$)/i.test(excerpt))) continue;
+        const group = kind === "incompatibility" ? "" : excerpt.slice(0, 2).toUpperCase();
+        if (kind === "hazard" && !["H2", "H3", "H4"].includes(group)) continue;
+        if (found.filter((item) => item.kind === kind && item.excerpt.toUpperCase().startsWith(group)).length >= 3) continue;
         if (found.some((item) => item.excerpt === excerpt)) continue;
         found.push({
           source: "PubChem", kind, title: record.Title + " · " + heading,
           url: pubchem + "/compound/" + record.CID + "#" + encodeURIComponent(heading), excerpt,
         });
-        if (found.filter((evidence) => evidence.kind === kind).length >= 3) break;
       }
     }
     for (const child of section.Section ?? []) visit(child, depth + 1);
@@ -203,7 +208,12 @@ async function nioshSafety(cas: string, loadIndex: () => Promise<ReturnType<type
   if (fields.get("CAS No.") !== cas) return [];
 
   const evidence: Citation[] = [{ source: "NIOSH", kind: "identity", title, url, excerpt: "CAS " + cas }];
-  for (const [heading, kind] of [["Incompatibilities & Reactivities", "incompatibility"], ["Symptoms", "hazard"]] as const) {
+  for (const [heading, kind] of [
+    ["Incompatibilities & Reactivities", "incompatibility"],
+    ["Symptoms", "hazard"], ["Exposure Routes", "hazard"], ["Target Organs", "hazard"], ["Flash Point", "hazard"],
+    ["Physical Description", "identity"], ["Boiling Point", "identity"], ["Freezing Point", "identity"],
+    ["Solubility", "identity"], ["Vapor Pressure", "identity"], ["Specific Gravity", "identity"],
+  ] as const) {
     const excerpt = fields.get(heading);
     if (excerpt && !/^(?:none|not available|n\.d\.|\?)$/i.test(excerpt)) {
       evidence.push({ source: "NIOSH", kind, title: title + " · " + heading, url, excerpt });
@@ -233,8 +243,8 @@ export function scientificSources() {
       cas = match.cas;
       identity = {
         solution: side, state: match.state,
-        records: match.records.map(({ CID, Title, MolecularFormula }) =>
-          ({ cid: CID, name: Title, formula: MolecularFormula })),
+        records: match.records.map(({ CID, Title, MolecularFormula, MolecularWeight, ConnectivitySMILES }) =>
+          ({ cid: CID, name: Title, formula: MolecularFormula, molecularWeight: MolecularWeight, smiles: ConnectivitySMILES })),
       };
       if (match.unverified) add("identifierUnverified");
       if (match.state === "matched") {
@@ -242,7 +252,11 @@ export function scientificSources() {
         cite({
           source: "PubChem", kind: "identity", title: chemical.Title,
           url: pubchem + "/compound/" + chemical.CID,
-          excerpt: "CID " + chemical.CID + " · " + chemical.MolecularFormula,
+          excerpt: [
+            "CID " + chemical.CID, chemical.MolecularFormula,
+            chemical.MolecularWeight && chemical.MolecularWeight + " g/mol",
+            chemical.ConnectivitySMILES && "SMILES " + chemical.ConnectivitySMILES,
+          ].filter(Boolean).join(" · "),
         });
         if (cas === unknown) {
           try {

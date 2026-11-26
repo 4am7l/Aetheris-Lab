@@ -2,6 +2,9 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { publicInputSchema } from "../src/domain";
 import type { AgentStatus, Evidence, PreliminaryReport } from "../src/review";
 import { providerFor, type AIConfig } from "./ai";
+import { calculate } from "./chemistry";
+import { GeminiFailure } from "./gemini";
+import { assembleScientificReport, scientificContext } from "./scientificReport";
 import { scientificSources } from "./sources";
 
 type AgentEnv = AIConfig & { DB: D1Database; AGENT_ENABLED?: string };
@@ -64,6 +67,7 @@ export async function processNextRequest(env: AgentEnv) {
     const request = await db.prepare("SELECT input_json FROM public_requests WHERE id = ?")
       .bind(run.requestId).first<{ input_json: string }>();
     const input = publicInputSchema.parse(JSON.parse(request?.input_json ?? "null"));
+    const calculation = calculate(input);
     const collect = scientificSources();
     const results = await Promise.all([collect(input.a, "A"), collect(input.b, "B")]);
     evidence = results.flatMap((result) => result.evidence);
@@ -71,9 +75,23 @@ export async function processNextRequest(env: AgentEnv) {
       identities: results.map((result) => result.identity),
       gaps: results.flatMap((result) => result.gaps),
       assessment: null,
+      calculation,
     };
-    if (!input.conditions.trim()) report.gaps.push({ code: "conditions" });
-    if (provider) {
+    if (!input.conditions.trim() && !input.calculation) report.gaps.push({ code: "conditions" });
+    if (provider?.name !== "openai") {
+      const context = scientificContext(input, report, evidence);
+      report.scientificReport = assembleScientificReport(
+        context, context.candidates.map(({ code }) => code), "evidence-review",
+      );
+      if (provider?.name === "gemini" && (context.data.evidence.length || calculation.status === "calculated")) {
+        try {
+          report.scientificReport = await provider.assess(context);
+        } catch (cause) {
+          status = "failed";
+          failure = cause instanceof GeminiFailure ? cause.code : "AI_UNAVAILABLE";
+        }
+      }
+    } else if (provider) {
       if (!evidence.length && report.gaps.some(({ code }) =>
         code === "pubchemUnavailable" || code === "nioshUnavailable")) {
         status = "failed";

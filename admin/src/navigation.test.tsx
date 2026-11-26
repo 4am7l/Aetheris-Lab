@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { StrictMode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "./App";
@@ -13,6 +13,8 @@ declare const jsdom: { window: { localStorage: Storage } };
 const fetchMock = vi.fn<typeof fetch>();
 const clients: QueryClient[] = [];
 const createdAt = "2026-01-01T00:00:00Z";
+// The signed-in route and review workspace load through successive asynchronous boundaries.
+configure({ asyncUtilTimeout: 5000 });
 function detail(id: string): AdminRequestDetail {
   return { id, status: "Submitted", createdAt, updatedAt: createdAt, archivedAt: null,
     input: { a: { ...blankSolution, name: `${id} detail` }, b: blankSolution, conditions: "" },
@@ -62,6 +64,65 @@ function mount(path = "/") {
     <Navigation /><App />
   </MemoryRouter></QueryClientProvider></StrictMode>);
 }
+
+it("loads the private assessment and submits a corrected bilingual section for approval", async () => {
+  const request: AdminRequestDetail = {
+    ...detail("first"),
+    status: "Pending Review",
+    images: [{ id: "photo", solution: "A" }],
+    run: { id: "7ded9144-6a1d-4fa7-989e-4bbf82680ddb", status: "completed", failureCode: null,
+      provider: "gemini", model: "gemini-4-hydrogen" },
+    report: {
+      identities: [], gaps: [], assessment: null,
+      scientificReport: { version: 1, origin: "gemini", findings: [
+        { topic: "safety", code: "reviewRequired", basis: "interpretation", referenceIds: [] },
+      ] },
+    },
+    evidence: [{
+      id: "cd682442-bf0c-4d70-a803-5259ed9d0d83", source: "PubChem", solution: "A",
+      kind: "identity", title: "Reference substance", url: "https://pubchem.ncbi.nlm.nih.gov/compound/962",
+      excerpt: "CID 962 · H2O", retrievedAt: createdAt,
+    }],
+  };
+  const approval = vi.fn();
+  const fallback = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === "/api/admin/requests/first") return Response.json(request);
+    if (path === "/api/admin/requests/first/decision") {
+      expect(new Headers(options?.headers).get("X-CSRF-Token")).toBe("token");
+      approval(JSON.parse(String(options?.body)));
+      return Response.json({ status: "Approved" });
+    }
+    return fallback(path, options);
+  });
+  mount("/requests/first");
+  expect(await screen.findByRole("heading", { name: adminText("geminiScientificReport") })).toBeTruthy();
+  expect(screen.getByRole("img", { name: /solution A/i }).getAttribute("src")).toBe("/api/admin/requests/first/images/photo");
+  fireEvent.click(screen.getByRole("button", { name: adminText("copyScientificSections") }));
+  const field = screen.getByRole("textbox", { name: /Overall chemical safety assessment · English/ });
+  expect((field as HTMLInputElement).value).toContain("indeterminate");
+  fireEvent.change(field, { target: { value: "Safety classification remains indeterminate after review." } });
+  const arabic = screen.getByRole("textbox", { name: /Overall chemical safety assessment · العربية/ });
+  expect(arabic.getAttribute("dir")).toBe("rtl");
+  fireEvent.change(arabic, { target: { value: "ظل تصنيف السلامة غير محسوم بعد المراجعة." } });
+  for (const key of ["reviewerNotes", "documentedConditions", "storageAssessment", "containerAssessment", "limitations"] as const) {
+    fireEvent.change(screen.getByRole("textbox", { name: adminText(key) }), { target: { value: "Reviewer assessment." } });
+  }
+  const citations = screen.getByRole("group", { name: adminText("evidenceSelection") });
+  fireEvent.click(within(citations).getByRole("checkbox", { name: /A · Reference substance/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: adminText("reviewAttestation") }));
+  fireEvent.click(screen.getByRole("button", { name: adminText("publishConfirm") }));
+  await waitFor(() => expect(approval).toHaveBeenCalledWith(expect.objectContaining({
+    runId: request.run?.id,
+    decision: "Approved",
+    result: expect.objectContaining({
+      scientificSections: [{
+        topic: "safety", en: "Safety classification remains indeterminate after review.",
+        ar: "ظل تصنيف السلامة غير محسوم بعد المراجعة.", referenceIds: [],
+      }],
+    }),
+  })));
+});
 
 function mockManagement() {
   const records = new Map([["first", detail("first")], ["second", detail("second")]]);

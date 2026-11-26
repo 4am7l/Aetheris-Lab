@@ -1,0 +1,44 @@
+# Phase 5 scientific assessment
+
+Aetheris Lab turns a two-solution submission into a private scientific assessment for a human reviewer. The public Pages app records the submission and displays progress on a token-protected receipt. The Worker retrieves source evidence, dispatches the declared deterministic model, and assembles the applicable findings. The admin Pages app displays the submission, private R2 photos, sources, calculations, and assessment. The matching receipt token can read the final report after a reviewer approves and publishes it.
+
+## Scientific coverage
+
+| Method or evidence | What it supports | Applicability and limitations |
+| --- | --- | --- |
+| Aqueous methanol dilution, v1 | Nominal analytical concentration from `c(final) = c(stock) × V(stock) / V(final)`. | Solution A is a homogeneous methanol-in-water stock at greater than zero and at most 3 mol/L. Solution B is pure water. Both liquids and the measured final volume are at 25 °C, and the declaration confirms solute retention. The measured final volume must exceed the stock volume. The volume of water is outside the calculation. |
+| Dilute aqueous sodium chloride balance, v1 | Stoichiometric amounts of Na⁺ and Cl⁻ and their nominal final molarities. Amount per ion is `c(A) × V(A) + c(B) × V(B)`. Concentration per ion is the amount divided by the measured final volume. | Both stocks contain only water and NaCl, with a single homogeneous liquid at 25 °C and ambient pressure. Each stock volume is 1 mL to 10 L. Nonzero stocks and the final solution must be within 1 × 10⁻⁶ to 0.010 mol/L. A stock may be explicitly zero. The measured final volume must agree with the summed stock volumes within 1%. The model assumes complete dissociation. The volume agreement is an admission check, and the measured volume is the denominator. |
+| PubChem PUG REST and PUG View | Compound identity, formula, molecular weight, connectivity SMILES when supplied, and available GHS and reactivity records. | Compound IDs verify a reference match. A physical sample may have a different formulation. Connectivity SMILES encodes connectivity only. Formula-only, conflicting, and unverified identifiers remain unresolved. PubChem aggregates some hazard records and each record retains its source URL. |
+| CDC/NIOSH Pocket Guide | CAS-matched substance profiles, physical description, selected physical properties and solubility, occupational exposure indicators, flash point, and reactivity information when available. | Records are primarily occupational substance references. Their scope, conditions and units need review before use in conclusions about a formulation. |
+| NIST Chemistry WebBook, SRD 69 | Sourced sodium chloride molecular weight of 58.443, used as 58.443 g/mol for the NaCl mass-concentration conversion. | This release pins the compound record in the method provenance. Thermochemistry and phase datasets remain candidates for case-specific models. |
+
+The two balances normalize compatible volume units and keep all numeric inputs and results with method versions and reference records. Sodium chloride also supports g/L via the referenced molar mass. An explicit declaration selects the method. Missing information produces a reason list. Conflicting identities, unsupported units, additional free-text conditions or notes, and out-of-range values route to manual review.
+
+Equilibrium, solution activities, acid–base speciation, pH, redox and electrochemical potentials, kinetics, reaction and by-product prediction, gas generation, phase transitions, precipitation, and thermodynamic or heat effects remain outside the quantitative model coverage. Source-based solubility, occupational toxicity, fire, and environmental information can appear as applicable. Commercial or undisclosed formulations and mixture-specific safety or stability require independent review. Measurement uncertainty is unavailable. The IPhreeqc benchmark is an independent model comparison for the fixture cases. Laboratory validation and a general equilibrium solver are outside this implementation.
+
+Sources: [OpenStax Chemistry 2e §3.3](https://openstax.org/books/chemistry-2e/pages/3-3-molarity), [PubChem PUG REST](https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest), [NIOSH Pocket Guide](https://www.cdc.gov/niosh/npg/), [NIST sodium chloride](https://webbook.nist.gov/cgi/cbook.cgi?ID=C7647145), [USGS PHREEQC](https://pubs.usgs.gov/publication/tm6A43).
+
+## Private Gemini assessment
+
+The existing Cloudflare Worker uses `gemini-4-hydrogen` by default when `AGENT_API_KEY` is configured. It sends one stateless GenerateContent request per eligible run with the key in an API header. The inputs include matched substance references, selected evidence excerpts and identifiers, declared phase and method, missing input codes, and versioned deterministic outputs. Free-text submission notes, photos, passwords, reviewer details, and tracking tokens stay in Aetheris Lab. The provider receives the presence of supplementary notes as a flag. It receives a reference to reactivity findings without procedural reactivity excerpts.
+
+Gemini selects and orders applicable finding codes. The response schema defines the eligible codes for the particular request. The Worker validates the complete JSON, enforces uniqueness and mandatory findings, and resolves codes to server-owned facts, reviewed bilingual wording, and citation identifiers. The report distinguishes submitted information, retrieved evidence, deterministic results, interpretation, and limitations. Numerical values, equations, references, and text come from the Worker’s controlled inputs and templates. Unsupported claims, invented values, citations, and additional model prose are rejected by the contract. A reviewer can add a topic supported by additional evidence.
+
+The parser combines text from the single completed candidate in source order. It accepts signature metadata on text parts, ignores thought-only parts, and discards signatures and raw provider payloads. A timeout, rate limit, upstream failure, blocked answer, invalid JSON, or inapplicable finding leaves the evidence and deterministic report available. The run records a bounded failure code. Requests lacking both matched evidence and a successful calculation go directly to human review without using Gemini. The existing D1 lease prevents concurrent claims. Analysts can ask an authenticated reviewer to retry a failed run explicitly. The scheduler makes no automatic retries, and a completed assessment is ineligible for retry. An intentional retry after a timeout can create a new provider request even if the first request completed upstream.
+
+Gemini output stays in the authenticated admin workflow. A reviewer can copy findings into bilingual report sections, correct the wording, choose references for each section, add or remove sections, and publish the result with the existing approval attestation. The Worker checks section citation IDs against the current run and persists a reviewed snapshot. The public API receives neither draft codes nor private run metadata.
+
+Sources: [Gemini 4 Hydrogen](https://ai.google.dev/gemini-api/docs/models/gemini-4-hydrogen), [Gemini structured outputs](https://ai.google.dev/gemini-api/docs/structured-output), [GenerateContent API](https://ai.google.dev/api/generate-content).
+
+## Benchmark reproduction
+
+`npm test` checks the OpenStax methanol exercise (0.102 mol/L), a separate exact rational methanol result (0.15625 mol/L), and four sodium chloride cases compared with independent IPhreeqc 3.7.3-15968 using the pinned Pitzer database. The salt fixtures cover g/L and mol/L conversion, mixed volume units, explicit zero stock, and both concentration boundaries. Each fixture checks individual ion amounts and concentrations and records the independent solver’s undersaturation and zero halite amounts. Vitest uses the checked-in fixtures and mocked HTTP.
+
+To reproduce the independent salt fixture, install PhreeqPy 0.6.0 in a Python environment and obtain the matching IPhreeqc library and Pitzer file. The verifier checks the solver version and database digest before comparing results.
+
+```sh
+python -m pip install phreeqpy==0.6.0
+python scripts/verify-nacl-reference.py /path/to/IPhreeqc-library /path/to/pitzer.dat
+```
+
+See the [Cloudflare release and manual test procedure](cloudflare.md) and the [reviewer workflow](admin-review.md).

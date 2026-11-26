@@ -49,9 +49,39 @@ Cloudflare references for [Pages monorepo setup](https://developers.cloudflare.c
 
 Apply migration `0006_admin_request_management.sql` to the target D1 database before merging or deploying the request management release. Confirm Wrangler reports it applied, then release the Worker before the updated admin Pages deployment. The existing cron cleans up deleted private photos even while `AGENT_ENABLED=false`.
 
-The optional OpenAI adapter requires `AI_PROVIDER=openai`, `AI_MODEL` set to a Chat Completions model supporting JSON mode, and Worker secrets `AGENT_API_KEY` and `AGENT_SYSTEM_PROMPT`. Use the supplied JSON schema and keep the original review constraints in the prompt. Treat source content as untrusted, flag only documented hazards and explicit pair concerns, make uncertainties explicit, and omit compatibility claims, narrative text, mixing procedures, ratios, and quantities. With no provider configured, the Worker still collects evidence and records that AI screening was unconfigured.
+## Phase 5 configuration and release
 
-[PubChem PUG REST and PUG View](https://pubchem.ncbi.nlm.nih.gov/docs/) and the [NIOSH Pocket Guide](https://www.cdc.gov/niosh/npg/npg.html) supply identity and safety evidence. PubChem receives chemical identifiers. The optional AI adapter receives source excerpts, candidate reference identities, and coded information gaps. Tracking tokens, reviewer data, photos, free-form submission notes, and numeric solution conditions stay out of the AI request.
+| Where | Name | Setting |
+| --- | --- | --- |
+| Worker variable | `AGENT_ENABLED` | `true` enables cron analysis. Use `false` during setup. |
+| Worker variable | `AI_PROVIDER` | `gemini`, the default when omitted. |
+| Worker variable | `AI_MODEL` | `gemini-4-hydrogen`, the default when omitted. Set it explicitly if an earlier model is already configured. |
+| Worker secret | `AGENT_API_KEY` | Gemini Developer API key, provisioned as an encrypted Worker secret. Scheduled runs use evidence and calculations when this secret is absent. |
+| Worker and admin Pages | `ADMIN_ORIGIN`, `ADMIN_PROXY_SECRET` | Exact admin Pages HTTPS origin and the matching proxy secret on the two runtimes. |
+| Worker secret | `ADMIN_PASSWORD` | Qualified reviewer credential. |
+| Public and admin Pages | `AETHERIS_API` | Service binding to the Worker for that environment. |
+
+Phase 5 uses new fields in the existing request, draft, and approved-result JSON columns. An installation with migrations `0001` through `0006` applied needs no schema change or backfill. Apply the existing migrations to a new staging database.
+
+1. Create separate staging D1 and private R2 bindings and two staging Pages projects with stable HTTPS origins. Copy `wrangler.toml` to an untracked `wrangler.staging.toml`. Edit the Worker name, admin origin, D1 name and ID, R2 bucket name, and rate-limit namespace IDs for staging. Under `[vars]`, set `AGENT_ENABLED = "false"`, `AI_PROVIDER = "gemini"`, and `AI_MODEL = "gemini-4-hydrogen"`.
+2. From the repository root run `npm ci`, `npm run build`, `npx wrangler d1 migrations apply DB --remote --config wrangler.staging.toml`, then `npx wrangler deploy --config wrangler.staging.toml --keep-vars`. Configure `ADMIN_PROXY_SECRET`, `ADMIN_PASSWORD`, and `AGENT_API_KEY` as staging Worker secrets in the dashboard. The Wrangler equivalent for the Gemini key is `npx wrangler secret put AGENT_API_KEY --config wrangler.staging.toml`, which prompts privately.
+3. Bind both staging Pages projects to the staging Worker as `AETHERIS_API`. Add the matching origin and proxy secret to admin Pages. Manually deploy the reviewed revision from the Pages dashboard with the project roots and build commands above. Activate `AGENT_ENABLED=true` on the staging Worker for the manual check. Start the manual test with an empty staging queue.
+4. After approval and the staging check, release the approved Worker revision with `npm run worker:deploy -- --keep-vars`, then release both production Pages projects from the same approved revision. Verify the production variables, secrets, and bindings in the table. Activate scheduled analysis when the reviewer team is ready.
+
+See [scientific coverage and provenance](scientific-engine.md), [Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/), and [Pages Functions bindings](https://developers.cloudflare.com/pages/functions/bindings/).
+
+The optional OpenAI adapter requires `AI_PROVIDER=openai`, `AI_MODEL` set to a Chat Completions model supporting JSON mode, and Worker secrets `AGENT_API_KEY` and `AGENT_SYSTEM_PROMPT`. Use the supplied JSON schema and keep the original review constraints in the prompt. Treat source content as untrusted, flag only documented hazards and explicit pair concerns, make uncertainties explicit, and omit compatibility claims, narrative text, mixing procedures, ratios, and quantities. With no provider configured, the Worker still runs deterministic checks, collects evidence, and records that AI was unconfigured.
+
+PubChem receives chemical identifiers. Gemini receives matched reference identities, selected evidence, coded gaps, and supported deterministic inputs and outputs. Tracking tokens, reviewer data, photos, and the submitter's free-text notes stay within the review workflow. [PubChem PUG REST and PUG View](https://pubchem.ncbi.nlm.nih.gov/docs/), [NIOSH Pocket Guide](https://www.cdc.gov/niosh/npg/).
+
+## One manual Gemini test
+
+1. On the isolated staging Worker, check `/api/health` returns `agent: "configured"` and `review: true`. Use the staging public Pages and admin Pages URLs.
+2. Submit one synthetic request. For both stocks enter sodium chloride, CAS `7647-14-5`, formula `NaCl`, water solvent, liquid state, and 25 °C. Enter A as 0.010 mol/L and 300 mL. Enter B as 0 mol/L and 100 mL. Keep the notes and free-text conditions empty. Select the sodium chloride declaration and set the measured final volume to 400 mL. An optional non-sensitive label photo can exercise the private R2 path.
+3. After the cron runs, the matching receipt should show **Pending Review** with no scientific result. `GET /api/admin/requests/<id>` on public Pages should return `404`. The equivalent signed-out request on admin Pages should return `401`.
+4. Sign into admin Pages and open the request. Check the Gemini assessment, citations, method version, and deterministic result of **0.003 mol** and **0.0075 mol/L** per modeled ion. Confirm the report differentiates retrieved facts, the calculation, interpretation, and uncertainties. Check the submitted photo if supplied.
+5. Copy the draft sections into the review. Edit the English and Arabic text, confirm the citations, complete the classification and attestation, then select **Publish approved assessment**. Refresh tracking and verify the corrected sections in both languages, including the equation and units. Confirm tracking still requires the original token.
+6. Refresh the admin detail and confirm the same run and the approval audit entry. Check Gemini project usage for one request. Disable the staging agent when finished. If a run fails, diagnose the displayed failure code before authorizing another call.
 
 ## API and smoke checks
 

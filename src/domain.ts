@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reviewedScienceSchema } from "./scientificReport";
 export const statuses = [
   "Draft",
   "Submitted",
@@ -98,13 +99,25 @@ export const blankSolution: Solution = {
   notes: "",
   source: "Manual entry",
 };
+const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+export const dilutionVolumeSchema = z.string().trim().max(64)
+  .refine((value) => decimal.test(value) && Number.isFinite(Number(value)));
+export const calculationInputSchema = z.strictObject({
+  kind: z.enum(["aqueous-dilution", "aqueous-sodium-chloride"]),
+  assumptionsConfirmed: z.literal(true),
+  finalVolume: z.strictObject({
+    value: dilutionVolumeSchema,
+    unit: z.enum(["mL", "L"]),
+  }).optional(),
+});
+
 export const requestInputSchema = z.object({
   a: solutionSchema,
   b: solutionSchema,
   conditions: z.string().max(3000),
+  calculation: calculationInputSchema.optional(),
 });
 export type RequestInput = z.infer<typeof requestInputSchema>;
-const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 export const publicSolutionSchema = solutionSchema.strict().superRefine((value, ctx) => {
   for (const field of ["concentration", "quantity", "temperature"] as const) {
     if (value[field] !== unknown && !decimal.test(value[field])) {
@@ -182,6 +195,7 @@ export const finalResultSchema = z.object({
   storage: z.string(),
   container: z.string(),
   limitations: z.array(z.string()).min(1),
+  scientificReport: reviewedScienceSchema.optional(),
   sources: z
     .array(
       z.object({

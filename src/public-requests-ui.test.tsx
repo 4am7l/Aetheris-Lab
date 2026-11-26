@@ -13,12 +13,12 @@ import {
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { blankSolution } from "./domain";
-import { en } from "./i18n";
+import { ar, en } from "./i18n";
 import Analysis from "./pages/Analysis";
 import Receipt from "./pages/Receipt";
 import Requests from "./pages/Requests";
 import { saveReceipt } from "./services/receipts";
-import { TextContext } from "./text";
+import { LanguageContext, TextContext } from "./text";
 
 declare const jsdom: { window: Pick<Window, "localStorage"> };
 
@@ -42,12 +42,12 @@ function Location() {
   return <output aria-label="Current URL">{pathname + search + hash}</output>;
 }
 
-function mount(path = "/analysis") {
+function mount(path = "/analysis", language: "en" | "ar" = "en") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <TextContext value={(key) => en[key]}>
+    <LanguageContext value={language}><TextContext value={(key) => language === "ar" ? ar[key] ?? en[key] : en[key]}>
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={[path]}>
           <Location />
@@ -58,7 +58,7 @@ function mount(path = "/analysis") {
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
-    </TextContext>,
+    </TextContext></LanguageContext>,
   );
 }
 
@@ -164,6 +164,24 @@ describe("real submission", () => {
     expect(document.body.textContent).not.toContain(token);
   });
 
+  it("submits the measured final volume only after an explicit dilution declaration", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "INVALID_REQUEST" }, { status: 400 }));
+    mount();
+    const submit = fillRequest();
+    fireEvent.click(screen.getByRole("checkbox", { name: en.dilutionOptIn }));
+    const volume = screen.getByRole("textbox", { name: en.dilutionFinalVolume });
+    fireEvent.change(volume, { target: { value: "500 mL" } });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.change(volume, { target: { value: "500.0" } });
+    fireEvent.click(submit);
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).calculation).toEqual({
+      kind: "aqueous-dilution", assumptionsConfirmed: true,
+      finalVolume: { value: "500.0", unit: "mL" },
+    });
+    await screen.findByText(en.submissionInvalid);
+  });
+
   it("rejects invalid input in the dialog and shows a safe error for server validation failures", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({ error: token }, { status: 400 }),
@@ -257,6 +275,11 @@ describe("receipt tracking", () => {
       hazards: [], incompatibilities: [], storage: "Not assessed", container: "Not assessed",
       limitations: ["No matching formulation data"],
       sources: [{ title: "Scientific reference", url: "https://www.cdc.gov/niosh/npg/npg.html" }],
+      scientificReport: [{
+        topic: "concentrations", en: "Verified reviewed concentration · 0.0075 mol/L",
+        ar: "التركيز المراجع · \u20660.0075 mol/L\u2069",
+        sources: [{ title: "Method reference", url: "https://webbook.nist.gov/cgi/cbook.cgi?ID=C7647145" }],
+      }],
       reviewedAt: receipt.updatedAt,
     };
     saveReceipt({ ...receipt, trackingToken: token });
@@ -266,13 +289,21 @@ describe("receipt tracking", () => {
     expect(await screen.findByText(en.pendingReviewStatus)).toBeTruthy();
     expect(screen.getByText(en.noVerdict)).toBeTruthy();
     expect(screen.queryByText(result.conditions)).toBeNull();
+    expect(screen.queryByText(result.scientificReport[0].en)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: en.refreshReceipt }));
     expect(await screen.findByRole("heading", { name: en.insufficientResult })).toBeTruthy();
     expect(screen.getByText(result.conditions)).toBeTruthy();
+    expect(screen.getByText(result.scientificReport[0].en)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Method reference" })).toBeTruthy();
     expect(screen.queryByText(en.noVerdict)).toBeNull();
     expect(localStorage.getItem(storageKey)).not.toContain(result.conditions);
     expect(document.body.textContent).not.toContain(token);
+    cleanup();
+    fetchMock.mockResolvedValueOnce(Response.json({ ...receipt, status: "Approved", result }));
+    mount(receiptPath, "ar");
+    expect((await screen.findByText(result.scientificReport[0].ar)).getAttribute("dir")).toBe("rtl");
+    expect(screen.queryByText(result.scientificReport[0].en)).toBeNull();
   });
 
   it("uses the saved token after remount and removes it on confirmation", async () => {
