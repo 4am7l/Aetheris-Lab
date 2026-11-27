@@ -190,12 +190,14 @@ function RateEntry({ api, id, directory, platform, mode }: {
   function build(form: FormData) {
     const base = { chemicalId: id, institutionId: optional(form, "institutionId"), supersedes: optional(form, "supersedes") };
     const extra = Object.fromEntries(fields.map(([name]) => [name, optional(form, name)]));
-    if (mode === "density") return { ...base, ...extra, source: field(form, "source"), kgPerLiter: numeric(form, "value") };
+    if (mode === "density") return { ...base, ...extra, source: field(form, "source"), kgPerLiter: numeric(form, "value"),
+      temperatureC: numeric(form, "temperatureC"), state: field(form, "state") };
     const common = { ...base, ...extra, value: numeric(form, "value"), unit: field(form, "unit"), verified: check(form, "verified") };
     return mode === "price" ? {
       ...common, kind: field(form, "kind"), currency: field(form, "currency").toUpperCase(),
       packageQuantity: numeric(form, "packageQuantity"), date: optional(form, "date"),
-    } : { ...common, stage: optional(form, "stage"), publicationDate: optional(form, "publicationDate"), source: optional(form, "source") };
+    } : { ...common, stage: optional(form, "stage"), publicationDate: optional(form, "publicationDate"), source: optional(form, "source"),
+      stageExclusive: check(form, "stageExclusive") };
   }
   return <WriteForm api={api} endpoint={"/versions/" + mode} build={build}>
     <div className="impact-grid compact">
@@ -204,6 +206,11 @@ function RateEntry({ api, id, directory, platform, mode }: {
       <LabInput name="value" en={mode === "density" ? "Density (kg/L)" : mode === "carbon" ? "Factor (kg CO₂e per unit)" : "Price per package"}
         ar={mode === "density" ? "الكثافة (كغم/لتر)" : mode === "carbon" ? "المعامل (كغم مكافئ الكربون لكل وحدة)" : "السعر للعبوة"} type="number" required />
       {mode !== "density" && <LabSelect name="unit" en="Measurement unit" ar="وحدة القياس" value="L" required options={quantityUnits.map((u) => [u, u])} />}
+      {mode === "density" && <>
+        <LabInput name="temperatureC" en="Measurement temperature (°C)" ar="درجة حرارة القياس (°م)" type="number" required />
+        <LabSelect name="state" en="State during measurement" ar="حالة المادة عند القياس" required
+          options={[["Liquid", t("Liquid", "سائل")], ["Solid", t("Solid", "صلب")]]} />
+      </>}
       {mode === "price" && <>
         <LabSelect name="kind" en="Price type" ar="نوع السعر" value="purchase" required options={["purchase", "disposal", "combined"].map((x) => [x, labLabel(lang, x === "disposal" ? "measureDisposal" : x)])} />
         <LabInput name="currency" en="Currency" ar="العملة" value="JOD" required />
@@ -217,6 +224,7 @@ function RateEntry({ api, id, directory, platform, mode }: {
       {mode !== "price" && <LabInput name="source" en="Authoritative source URL" ar="رابط المصدر المعتمد" type="url" required={mode === "density"} />}
       {fields.map(([name, en, ar]) => <LabInput key={name} name={name} en={en} ar={ar} required={mode === "density"} />)}
     </div>
+    {mode === "carbon" && <label><input type="checkbox" name="stageExclusive" /> {t("The factor measures this stage only.", "يقيس المعامل هذه المرحلة وحدها.")}</label>}
     {mode !== "density" && <label><input type="checkbox" name="verified" /> {t("I independently verified the source and applicability.", "تحققت بشكل مستقل من المصدر والانطباق.")}</label>}
   </WriteForm>;
 }

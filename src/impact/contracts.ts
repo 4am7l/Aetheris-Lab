@@ -12,15 +12,18 @@ export interface CatalogChemical {
 export interface ImpactEvent {
   id: number; state: ImpactState; createdAt: string;
   activities: Activity[]; calculation: ImpactCalculation | null; reason: string | null;
+  reviewRequired: boolean;
 }
 
 export interface OperationImpact {
+  writable: boolean;
   assessed: { liters: number | null; kilograms: number | null; knownQuantities: number; totalQuantities: number };
   evidence: { identifiedSides: number; citedSources: number; conditionsDocumented: boolean; uncertaintyDocumented: boolean; coveredFinancialCategories: number; coveredCarbonStages: number };
   findings: string[];
   classification: PublicResult["classification"];
   reviewedWaste: PublicResult["wasteAssessment"];
   estimate: ImpactCalculation | null;
+  estimateReviewRequired: boolean;
   current: ImpactEvent | null;
   events: ImpactEvent[];
   sourceReferences: PublicResult["sources"];
@@ -44,8 +47,8 @@ export interface WorkspaceIdentity {
 export interface ImpactMetric { value: number | null; covered: number }
 export interface ImpactTotals {
   assessments: number; approved: number; completed: number; reported: number; verified: number; pending: number;
-  prevention: number; incompatibilities: number;
-  estimatedFinancial: ImpactMetric; verifiedFinancial: ImpactMetric; purchase: ImpactMetric; disposal: ImpactMetric;
+  prevention: number; incompatibilities: number; needsRecheck: number; confirmedActions: number;
+  estimatedFinancial: ImpactMetric; verifiedFinancial: ImpactMetric; purchase: ImpactMetric; replacement: ImpactMetric; disposal: ImpactMetric;
   assessed: ImpactMetric; preserved: ImpactMetric; preservedKg: ImpactMetric; avoided: ImpactMetric; avoidedKg: ImpactMetric;
   segregated: ImpactMetric; segregatedKg: ImpactMetric; recovery: ImpactMetric; recoveryKg: ImpactMetric;
   authorizedDisposal: ImpactMetric; authorizedDisposalKg: ImpactMetric; carbon: ImpactMetric; verifiedCarbon: ImpactMetric;
@@ -54,7 +57,8 @@ export interface ImpactBucket extends ImpactTotals { period: string }
 export interface ImpactLog {
   id: string; date: string; completedAt: string | null; status: PublicRequestStatus; names: string[];
   state: ImpactState | null; actions: ActivityKind[]; labId: string | null; labName: string | null;
-  estimate: number | null; realized: number | null; waste: number | null; carbon: number | null; findings: string[];
+  estimate: number | null; realized: number | null; waste: number | null; wasteKg: number | null;
+  carbon: number | null; verifiedCarbon: number | null; reviewRequired: boolean; findings: string[];
 }
 export interface ImpactOverview {
   totals: ImpactTotals;

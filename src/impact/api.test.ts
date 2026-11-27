@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
+import { jsPDF } from "jspdf";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "../../worker";
 import { testDatabase } from "../../tests/d1";
@@ -20,8 +21,13 @@ const reviewerToken = "b".repeat(64);
 const viewerToken = "c".repeat(64);
 const otherToken = "d".repeat(64);
 const tenantToken = "e".repeat(64);
+const secondManagerToken = "f".repeat(64);
+const foreignManagerToken = "1".repeat(64);
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-const solution = { ...blankSolution, name: "Sodium chloride", cas: "7647-14-5", formula: "NaCl", quantity: "250", quantityUnit: "mL" };
+const solution = { ...blankSolution, name: "Sodium chloride", cas: "7647-14-5", formula: "NaCl", quantity: "250", quantityUnit: "mL",
+  concentration: "0.1", unit: "mol/L", solvent: "Water", state: "Liquid", temperature: "25" };
+const water = { ...blankSolution, name: "Water", cas: "7732-18-5", formula: "H2O", quantity: "0.5", quantityUnit: "L",
+  solvent: "Water", state: "Liquid", temperature: "25" };
 const scenarioMeta = { assumptions: "Measured baseline and documented comparison", references: [{ title: "Fixture documented evidence" }] };
 const actualDate = "2025-06-01";
 let migrations: string[];
@@ -58,6 +64,8 @@ beforeEach(() => {
     ["viewer-a", viewerToken, "uni-a", "lab-a", "viewer"],
     ["reviewer-b", otherToken, "uni-b", "lab-b", "reviewer"],
     ["manager-a", tenantToken, "uni-a", null, "institution-admin"],
+    ["stock-a", secondManagerToken, "uni-a", "lab-a", "lab-manager"],
+    ["stock-b", foreignManagerToken, "uni-b", "lab-b", "lab-manager"],
   ] as const) {
     db.prepare(`INSERT INTO institution_memberships(id,institution_id,lab_id,role,token_hash,invitation_hash,invite_expires_at,created_at,created_by,accepted_at)
       VALUES(?,?,?,?,?,?,?,?,?,?)`).run(actor, institution, lab, role, hash("membership:" + credential), hash("invite:" + credential), "2999-01-01",
@@ -88,9 +96,9 @@ async function ok<T>(response: Response, status = 200) {
   return JSON.parse(text) as T;
 }
 function admin(path: string, data?: unknown) { return call(platformPath + path, data, undefined, true); }
-async function submit(name = solution.name) {
+async function submit(name = solution.name, patch = {}) {
   return ok<CreatedReceipt>(await call("/api/requests", {
-    a: { ...solution, name }, b: { ...solution, name: "Water", quantity: "0.5", quantityUnit: "L" }, conditions: "",
+    a: { ...solution, name, ...patch }, b: water, conditions: "",
   }), 201);
 }
 async function affiliate(receipt: CreatedReceipt, token = viewerToken) {
@@ -112,15 +120,39 @@ function approve(id: string, classification = "Insufficient information") {
 const changes = (expectedId = 0) => ({ key: randomUUID(), expectedId });
 const report = (receipt: CreatedReceipt, payload: unknown) => call(base + "/operations/" + receipt.id + "/report", payload, receipt.trackingToken);
 const operation = (receipt: CreatedReceipt) => base + "/operations/" + receipt.id;
-const caseFor = (x: number, y: number) => ({ baseline: [{ amount: x, evidence: "baseline" }], actual: [{ amount: y, evidence: "actual" }] });
-const financial = { purchase: caseFor(10, 0), disposal: caseFor(5, 0), handling: caseFor(0, 20), treatment: caseFor(0, 2), recovery: caseFor(0, 0) };
-const action = (kind: string, q?: number, materialId?: string) => ({ kind, date: actualDate, quantity: q === undefined ? undefined : { value: q, unit: "mL" }, materialId });
+const caseFor = (x: number, y: number, record = "fixture") => ({
+  baseline: [{ amount: x, evidence: record + " baseline" }], actual: [{ amount: y, evidence: record + " actual" }],
+});
+const financial = { purchase: caseFor(10, 0, "purchase"), disposal: caseFor(5, 0, "disposal"), handling: caseFor(0, 20, "handling"),
+  treatment: caseFor(0, 2, "treatment"), recovery: caseFor(0, 0, "recovery") };
+const action = (kind: string, q?: number, materialId?: string) => ({ kind, date: new Date().toISOString().slice(0, 10),
+  quantity: q === undefined ? undefined : { value: q, unit: "mL" }, materialId, side: materialId ? "A" : undefined });
 async function verify(receipt: CreatedReceipt, impact: OperationImpact, scenario?: unknown, extra = {}) {
   return call(ws + "/operations/" + receipt.id + "/review", { ...changes(impact.current?.id), decision: "verify", reason: "Qualified review of activity records",
+    evidenceReference: impact.current?.activities.some(({ kind }) => kind !== "no-action") ? "operation/" + receipt.id : undefined,
     ...(scenario ? { scenario, realizedEvidence: "Invoice and activity evidence" } : {}), ...extra }, reviewerToken);
 }
+async function formulation(overrides = {}) {
+  return (await ok<{ id: string }>(await call(ws + "/chemicals", {
+    nameEn: "Sodium chloride solution", nameAr: "محلول كلوريد الصوديوم", cas: "7647-14-5", formula: "NaCl",
+    concentration: "0.1 mol/L", solvent: "Water", physicalState: "Liquid", formulation: "Supplier label lot A",
+    source: "https://pubchem.ncbi.nlm.nih.gov/compound/5234", verified: true, ...overrides,
+  }, tenantToken), 201)).id;
+}
+const outcome = (token = reviewerToken) => call(ws + "/overview", undefined, token).then((response) => ok<ImpactOverview>(response));
 
 describe("sustainability reference and tenant access", () => {
+  it("enforces the stricter rate budget for profile creation, redemption and original PDF upload", async () => {
+    const calls: string[] = [];
+    env.SUBMISSION_LIMIT = { limit: ({ key }) => { calls.push(key); return Promise.resolve({ success: false }); } };
+    expect((await call(base + "/profile/create", {})).status).toBe(429);
+    expect((await call(ws + "/redeem", {})).status).toBe(429);
+    expect((await call(ws + "/sds", {}, secondManagerToken)).status).toBe(429);
+    expect((await call(ws + "/sds", undefined, secondManagerToken)).status).toBe(200);
+    expect(new Set(calls).size).toBe(3);
+    expect(calls.join(" ")).not.toContain(secondManagerToken);
+  });
+
   it("shares neither reference nor workspace request budgets with public receipt tracking", async () => {
     const keys = new Set<string>();
     env.TRACKING_LIMIT = {
@@ -183,6 +215,56 @@ describe("sustainability reference and tenant access", () => {
     expect((await call(ws + "/overview", undefined, session.token)).status).toBe(401);
   });
 
+  it("scopes departments, labs, pagination anchors and privileged resources on the server", async () => {
+    db.prepare("INSERT INTO institution_departments VALUES ('dept-a2','uni-a','قسم مختلف','Other department')").run();
+    db.prepare("INSERT INTO institution_labs VALUES ('lab-a2','uni-a','dept-a2','مختبر مختلف','Other lab')").run();
+    const invitation = await ok<{ invitation: string }>(await call(ws + "/memberships", {
+      institutionId: "uni-a", labId: "lab-a2", role: "viewer",
+    }, tenantToken), 201);
+    const sibling = await ok<{ token: string }>(await call(ws + "/redeem", { invitation: invitation.invitation }), 201);
+    const first = await submit("Scoped study A");
+    const second = await submit("Scoped study B");
+    await affiliate(first);
+    await affiliate(second, sibling.token);
+    approve(first.id);
+    approve(second.id);
+    expect((await call(ws + "/operations/" + first.id, undefined, sibling.token)).status).toBe(404);
+    expect((await call(ws + "/operations/" + first.id + "/review", {}, sibling.token)).status).toBe(404);
+    expect((await call(ws + "/operations/" + second.id + "/estimate", {}, sibling.token)).status).toBe(403);
+    expect((await call(ws + "/memberships", { institutionId: "uni-a", role: "institution-admin" }, sibling.token)).status).toBe(403);
+    expect((await call(ws + "/audit", undefined, sibling.token)).status).toBe(403);
+    expect((await call(ws + "/affiliate", { id: first.id, receipt: first.trackingToken, labId: "lab-a" }, sibling.token)).status).toBe(403);
+    const foreignCursor = await ok<ImpactOverview>(await call(ws + "/overview?after=" + first.id, undefined, sibling.token));
+    const unknownCursor = await ok<ImpactOverview>(await call(ws + "/overview?after=" + randomUUID(), undefined, sibling.token));
+    expect(foreignCursor.log).toEqual(unknownCursor.log);
+    expect(foreignCursor.log).toEqual([]);
+    expect((await ok<ImpactOverview>(await call(ws + "/overview?department=dept-a2", undefined, viewerToken))).totals.assessments).toBe(0);
+    expect((await ok<ImpactOverview>(await call(ws + "/overview?department=dept-a2", undefined, tenantToken))).log.map(({ id }) => id)).toEqual([second.id]);
+    expect(JSON.stringify(await ok(await call(ws + "/directory", undefined, sibling.token)))).not.toContain("dept-a\"");
+    const wrongOrigin = await worker.fetch(new Request(origin + ws + "/overview", {
+      headers: { Origin: "https://other.example.test", Authorization: "Bearer " + sibling.token },
+    }), env);
+    expect(wrongOrigin.status).toBe(403);
+    const response = await call(ws + "/identity", undefined, sibling.token);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.text()).not.toContain(sibling.token);
+  });
+
+  it("keeps global invoice references private from institutional administrators", async () => {
+    const material = await ok<{ id: string }>(await admin("/chemicals", { nameEn: "Public reference", nameAr: "مرجع عام",
+      cas: "7647-14-5", formula: "NaCl", concentration: "0.1 mol/L", solvent: "Water",
+      formulation: "Supplier label", verified: true, source: "https://example.test/material" }), 201);
+    const price = { chemicalId: material.id, kind: "purchase", value: 10, unit: "L", packageQuantity: 1,
+      verified: true, date: actualDate, invoice: "Global private test invoice" };
+    await ok(await admin("/versions/price", price), 201);
+    await ok(await call(ws + "/versions/price", { ...price, invoice: "Institution A private test invoice" }, tenantToken), 201);
+    expect(await (await call(base + "/chemicals/" + material.id)).text()).not.toContain("private test invoice");
+    const own = await (await call(ws + "/chemicals/" + material.id, undefined, tenantToken)).text();
+    expect(own).toContain("Institution A private test invoice");
+    expect(own).not.toContain("Global private test invoice");
+    expect(await (await call(ws + "/chemicals/" + material.id, undefined, otherToken)).text()).not.toContain("private test invoice");
+  });
+
   it("gates approval, links older receipts to a revocable private profile and uses no identifier as a credential", async () => {
     const receipt = await submit();
     const out = await ok<{ token: string }>(await call(base + "/profile/create", {}), 201);
@@ -205,6 +287,119 @@ describe("sustainability reference and tenant access", () => {
 });
 
 describe("reviewed calculations and outcomes", () => {
+  it("caps measured actions by assessed side and dimension, and allows separate segregation", async () => {
+    const receipt = await submit();
+    await affiliate(receipt);
+    approve(receipt.id);
+    for (const [activities, reason] of [
+      [[{ ...action("returned", 251), side: "A" }], "ACTIVITY_QUANTITY_UNSUPPORTED"],
+      [[{ ...action("returned", 1), quantity: { value: 1, unit: "g" } }], "ACTIVITY_QUANTITY_UNSUPPORTED"],
+      [[{ ...action("returned", 150), side: "A" }, { ...action("disposal", 120), side: "A" }], "ACTIVITY_QUANTITY_OVERLAP"],
+      [[{ ...action("returned", 150), side: "A", date: actualDate }], "INVALID_ACTION_DATE"],
+    ] as const) {
+      const response = await report(receipt, { ...changes(), activities });
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({ error: reason });
+    }
+    expect((await report(receipt, { ...changes(), activities: [action("returned", -1)] })).status).toBe(400);
+    const pending = await ok<OperationImpact>(await report(receipt, { ...changes(),
+      activities: [{ ...action("disposal", 250), side: "A" }, { ...action("segregation", 250), side: "A" }],
+    }));
+    expect((await outcome()).totals).toMatchObject({ pending: 1, confirmedActions: 0, authorizedDisposal: { value: null, covered: 0 } });
+    const missingEvidence = await verify(receipt, pending, undefined, { evidenceReference: undefined });
+    expect(await missingEvidence.json()).toEqual({ error: "ACTION_EVIDENCE_REQUIRED" });
+    await ok(await verify(receipt, pending));
+    expect((await outcome()).totals).toMatchObject({ pending: 0, confirmedActions: 1, assessed: { value: 0.75, covered: 1 },
+      authorizedDisposal: { value: 0.25, covered: 1 }, segregated: { value: 0.25, covered: 1 }, preserved: { value: null, covered: 0 } });
+  });
+
+  it("matches verified rates to assessed formulation and density conditions", async () => {
+    const exact = await formulation();
+    const molal = await formulation({ concentration: "0.1 m" });
+    const differentSolvent = await formulation({ solvent: "Ethanol" });
+    const wrongState = await formulation({ physicalState: "Solid" });
+    const receipt = await submit();
+    await affiliate(receipt);
+    approve(receipt.id);
+    const reportWith = (materialId: string) => report(receipt, { ...changes(), activities: [action("returned", 100, materialId)] });
+    for (const id of [molal, differentSolvent, wrongState]) {
+      expect(await (await reportWith(id)).json()).toEqual({ error: "ACTIVITY_FORMULATION_MISMATCH" });
+    }
+    expect(await (await report(receipt, { ...changes(), activities: [{ ...action("returned", 100, exact), side: undefined }] })).json())
+      .toEqual({ error: "ACTIVITY_FORMULATION_REQUIRED" });
+    const pending = await ok<OperationImpact>(await reportWith(exact));
+    const price = { chemicalId: exact, currency: "JOD", kind: "purchase", packageQuantity: 1, unit: "kg",
+      verified: true, value: 40, invoice: "Invoice unit price", date: actualDate };
+    const verifiedPrice = await ok<{ id: string }>(await call(ws + "/versions/price", price, tenantToken), 201);
+    const unverifiedPrice = await ok<{ id: string }>(await call(ws + "/versions/price", { ...price, verified: false }, tenantToken), 201);
+    const density = { chemicalId: exact, kgPerLiter: 1.05, state: "Liquid", temperatureC: 25,
+      source: "https://example.test/source", conditions: "Fixture at atmospheric pressure" };
+    const valid = await ok<{ id: string }>(await call(ws + "/versions/density", density, tenantToken), 201);
+    const wrongTemp = await ok<{ id: string }>(await call(ws + "/versions/density", { ...density, temperatureC: 30 }, tenantToken), 201);
+    const scenarioWith = (densityVersionId: string, value = 100, versionId = verifiedPrice.id) => ({ ...scenarioMeta,
+      beneficiary: "institution", financial: {
+        purchase: { baseline: [{ materialId: exact, densityVersionId, versionId, quantity: { value, unit: "mL" } }], actual: caseFor(0, 0).actual },
+      },
+    });
+    expect(await (await verify(receipt, pending, scenarioWith(wrongTemp.id))).json()).toEqual({ error: "SCENARIO_FORMULATION_OR_QUANTITY" });
+    expect(await (await verify(receipt, pending, scenarioWith(valid.id, 200))).json()).toEqual({ error: "SCENARIO_ACTION_QUANTITY" });
+    expect(await (await verify(receipt, pending, scenarioWith(valid.id, 100, unverifiedPrice.id))).json()).toEqual({ error: "SCENARIO_EVIDENCE_UNAVAILABLE" });
+    const saved = await ok<OperationImpact>(await verify(receipt, pending, scenarioWith(valid.id)));
+    expect(saved.current?.calculation?.financial.purchase.difference).toBe(4.2);
+    expect(saved.current?.calculation?.net.difference).toBeNull();
+    expect((await outcome()).totals.purchase).toEqual({ value: 4.2, covered: 1 });
+  });
+
+  it("verifies only stage-exclusive carbon factors and exports verified activity estimates separately", async () => {
+    const materialId = await formulation();
+    const carbon = { chemicalId: materialId, value: 3, unit: "L", stage: "manufacturing", geography: "JO",
+      boundary: "Factory process at stated conditions", source: "https://example.test/source", publicationDate: actualDate,
+      methodology: "Measured process with a defined factory boundary", uncertainty: "Fixture uncertainty", verified: true };
+    expect((await call(ws + "/versions/carbon", carbon, tenantToken)).status).toBe(400);
+    const unsupported = await ok<{ id: string }>(await call(ws + "/versions/carbon", { ...carbon, verified: false }, tenantToken), 201);
+    const supported = await ok<{ id: string }>(await call(ws + "/versions/carbon", { ...carbon, stageExclusive: true }, tenantToken), 201);
+    const receipt = await submit();
+    await affiliate(receipt);
+    approve(receipt.id, "Incompatible");
+    expect((await outcome()).totals).toMatchObject({ incompatibilities: 1, prevention: 0 });
+    const pending = await ok<OperationImpact>(await report(receipt, { ...changes(), activities: [action("returned", 250, materialId)] }));
+    const noActivity = [{ zero: true, evidence: "Documented zero activity" }];
+    const zeroes = { baseline: noActivity, actual: noActivity };
+    const scenario = (versionId: string) => ({ ...scenarioMeta, emissions: {
+      manufacturing: { baseline: [{ materialId, versionId, quantity: { value: 0.25, unit: "L" } }], actual: noActivity },
+      transportation: zeroes, treatment: zeroes, disposal: zeroes,
+    } });
+    expect(await (await verify(receipt, pending, scenario(unsupported.id))).json()).toEqual({ error: "SCENARIO_EVIDENCE_UNAVAILABLE" });
+    await ok(await verify(receipt, pending, scenario(supported.id)));
+    expect((await outcome()).totals).toMatchObject({ verifiedCarbon: { value: 0.75, covered: 1 }, carbon: { value: null, covered: 0 }, prevention: 0 });
+    const csv = await call(ws + "/overview.csv", undefined, reviewerToken);
+    const data = await csv.text();
+    expect(data).toContain('"Estimated avoided kg CO2e from verified activity"');
+    expect(data).toContain('"0.75","Blank cells are unavailable values. Emissions are modeled estimates."');
+  });
+
+  it("reserves evidence across concurrent approvals, rejects reuse, and preserves the first claim after cancellation", async () => {
+    const records = [];
+    for (const name of ["Claim one", "Claim two"]) {
+      const receipt = await submit(name);
+      await affiliate(receipt);
+      approve(receipt.id);
+      records.push({ receipt, pending: await ok<OperationImpact>(await report(receipt, { ...changes(), activities: [action("preserved", 100)] })) });
+    }
+    const replies = await Promise.all(records.map(({ receipt, pending }, i) =>
+      verify(receipt, pending, undefined, { evidenceReference: i ? " register   88 " : "Register 88" })));
+    expect(replies.map((response) => response.status).sort()).toEqual([200, 409]);
+    const winner = replies.findIndex((response) => response.status === 200);
+    const loser = 1 - winner;
+    expect(await replies[loser].json()).toEqual({ error: "DUPLICATE_IMPACT_EVIDENCE" });
+    const approved = await replies[winner].json() as OperationImpact;
+    expect((await outcome()).totals).toMatchObject({ verified: 1, pending: 1, preserved: { value: 0.1, covered: 1 } });
+    await ok(await call(ws + "/operations/" + records[winner].receipt.id + "/review",
+      { ...changes(approved.current?.id), decision: "cancel", reason: "Evidence withdrawn" }, reviewerToken));
+    expect((await outcome()).totals).toMatchObject({ verified: 0, pending: 1, preserved: { value: null, covered: 0 } });
+    expect((await verify(records[loser].receipt, records[loser].pending, undefined, { evidenceReference: "register 88" })).status).toBe(409);
+  });
+
   it("deduplicates reports, handles concurrent review, corrections and cancellation, and builds scoped aggregates", async () => {
     const receipt = await submit("=1+1");
     await affiliate(receipt);
@@ -212,7 +407,7 @@ describe("reviewed calculations and outcomes", () => {
     const scenario = { ...scenarioMeta, beneficiary: "institution", financial };
     const estimate = await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken));
     expect(estimate.estimate?.net.difference).toBe(-7);
-    const input = { ...changes(estimate.current?.id), activities: [action("segregation", 250), action("abandoned")] };
+    const input = { ...changes(estimate.current?.id), activities: [action("segregation", 250), action("preserved", 250), action("abandoned")] };
     const replies = await Promise.all([report(receipt, input), report(receipt, input)]);
     const states = await Promise.all(replies.map((reply) => ok<OperationImpact>(reply)));
     expect(states[0].current).toEqual(states[1].current);
@@ -235,6 +430,7 @@ describe("reviewed calculations and outcomes", () => {
     expect(csvText).toContain("'=1+1");
     const correction = await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/review", {
       ...changes(saved.current?.id), decision: "correct", reason: "Corrected quantity", activities: [action("segregation", 100)],
+      evidenceReference: "operation/" + receipt.id,
     }, reviewerToken));
     expect(correction.current?.state).toBe("corrected");
     const after = await ok<ImpactOverview>(await call(ws + "/overview", undefined, reviewerToken));
@@ -266,7 +462,7 @@ describe("reviewed calculations and outcomes", () => {
     const confirmed = await ok<OperationImpact>(await verify(receipt, fourth));
     expect(confirmed.current?.state).toBe("verified");
     const result = await ok<ImpactOverview>(await call(ws + "/overview", undefined, reviewerToken));
-    expect(result.totals).toMatchObject({ verified: 1, prevention: 0, verifiedFinancial: { value: null, covered: 0 }, avoided: { value: null, covered: 0 } });
+    expect(result.totals).toMatchObject({ verified: 1, confirmedActions: 0, prevention: 0, verifiedFinancial: { value: null, covered: 0 }, avoided: { value: null, covered: 0 } });
     expect(db.prepare("SELECT decision FROM public_review_decisions WHERE request_id=?").get(receipt.id)?.decision).toBe("Approved");
   });
 
@@ -283,12 +479,12 @@ describe("reviewed calculations and outcomes", () => {
     await affiliate(receipt);
     approve(receipt.id);
     const scenario = { ...scenarioMeta, beneficiary: "institution", financial: {
-      ...financial, purchase: { baseline: [{ materialId: id, versionId: version.id, quantity: { value: 1, unit: "L" } }], actual: caseFor(0, 0).actual },
+      ...financial, purchase: { baseline: [{ materialId: id, versionId: version.id, quantity: { value: 0.25, unit: "L" } }], actual: caseFor(0, 0).actual },
     } };
-    expect((await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken))).estimate?.net.difference).toBe(-7);
+    expect((await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken))).estimate?.net.difference).toBe(-14.5);
     await ok(await call(ws + "/versions/price", { ...price, supersedes: version.id, value: 30, invoice: "invoice-v2" }, tenantToken), 201);
     const fetched = await ok<OperationImpact>(await call(operation(receipt), undefined, receipt.trackingToken));
-    expect(fetched.estimate?.net.difference).toBe(-7);
+    expect(fetched.estimate?.net.difference).toBe(-14.5);
     expect(JSON.stringify(fetched)).not.toContain("invoice-v1");
     expect(db.prepare("SELECT count(*) AS n FROM chemical_price_versions WHERE chemical_id = ?").get(id)?.n).toBe(2);
     const provisional = await ok<OperationImpact["estimate"]>(await call(base + "/calculator", {
@@ -323,22 +519,77 @@ describe("scoped laboratory tools", () => {
     expect(stock.movements).toHaveLength(1);
   });
 
+  it("compensates inventory once through correction and cancellation and retries a pending adjustment", async () => {
+    const materialId = await formulation();
+    const item = await ok<{ id: string }>(await call(ws + "/inventory", { chemicalId: materialId, labId: "lab-a", unit: "L",
+      container: "audit-container", location: "Approved storage" }, tenantToken), 201);
+    const root = ws + "/inventory/" + item.id;
+    const stock = () => call(root, undefined, viewerToken).then((response) => ok<{
+      item: { quantity: number }; movements: { kind: string }[]; reconciliations: { movementId: number; eventId: number; delta: number }[];
+    }>(response));
+    const receipt = await submit();
+    await affiliate(receipt);
+    approve(receipt.id);
+    const pending = await ok<OperationImpact>(await report(receipt, { ...changes(), activities: [action("returned", 250, materialId)] }));
+    const verified = await ok<OperationImpact>(await verify(receipt, pending));
+    await ok(await call(root + "/movement", { key: randomUUID(), kind: "returned", requestId: receipt.id,
+      impactEventId: verified.current?.id, reason: "Return record" }, tenantToken), 201);
+    const manual = (kind: string, value: number) => call(root + "/movement", { key: randomUUID(), kind,
+      quantity: { value, unit: "L" }, reason: "Stock record" }, tenantToken);
+    await ok(await manual("consumed", 0.2), 201);
+    const corrected = await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/review", {
+      ...changes(verified.current?.id), decision: "correct", reason: "Correct recorded return",
+      activities: [action("returned", 100, materialId)], evidenceReference: "operation/" + receipt.id,
+    }, reviewerToken));
+    const after = await stock();
+    expect(after.item.quantity).toBeCloseTo(0.05);
+    expect(after.reconciliations).toHaveLength(1);
+    const { movementId, eventId, delta } = after.reconciliations[0];
+    expect(delta).toBeCloseTo(-0.15);
+    const retry = (who = tenantToken) => call(root + "/reconcile", { movementId, eventId }, who);
+    expect((await retry(viewerToken)).status).toBe(403);
+    expect((await retry(otherToken)).status).toBe(403);
+    expect((await retry(foreignManagerToken)).status).toBe(404);
+    expect((await retry()).status).toBe(409);
+    await ok(await manual("received", 0.25), 201);
+    const receipts = await Promise.all([retry(), retry()]);
+    expect(receipts.map((response) => response.status)).toEqual([200, 200]);
+    expect((await stock()).item.quantity).toBeCloseTo(0.15);
+    expect((await stock()).reconciliations).toEqual([]);
+    const cancellation = { ...changes(corrected.current?.id), decision: "cancel", reason: "Withdrawn evidence" };
+    const reviewPath = ws + "/operations/" + receipt.id + "/review";
+    await ok(await call(reviewPath, cancellation, reviewerToken));
+    await ok(await call(reviewPath, cancellation, reviewerToken));
+    const final = await stock();
+    expect(final.item.quantity).toBeCloseTo(0.05);
+    expect(final.movements.filter(({ kind }) => kind === "adjustment")).toHaveLength(2);
+    expect((await outcome()).totals.preserved).toEqual({ value: null, covered: 0 });
+  });
+
   it("stores original SDS privately, validates PDF signatures, and records a qualified decision", async () => {
-    const form = (text = "%PDF-1.7\nFixture") => {
+    const fixture = new jsPDF().text("Fixture SDS", 20, 20).output("arraybuffer");
+    const form = (pdf: BlobPart = fixture) => {
       const data = new FormData();
-      data.set("pdf", new Blob([text], { type: "application/pdf" }), "fixture.pdf");
+      data.set("pdf", new Blob([pdf], { type: "application/pdf" }), "fixture.pdf");
       data.set("metadata", JSON.stringify({ title: "Fixture SDS", labId: "lab-a", confirmed: true,
         candidates: [{ section: "hazards", page: 2, text: "Original page excerpt" }] }));
       return data;
     };
     expect((await call(ws + "/sds", form("not a PDF"), tenantToken)).status).toBe(400);
+    expect((await call(ws + "/sds", form("%PDF-1.7\nOnly a header"), tenantToken)).status).toBe(400);
     const { id } = await ok<{ id: string }>(await call(ws + "/sds", form(), tenantToken), 201);
     expect((await call(ws + "/sds/" + id + "/file", undefined, otherToken)).status).toBe(404);
+    expect((await call(ws + "/sds/" + id + "/file", undefined, viewerToken)).status).toBe(404);
+    expect(await ok<{ documents: unknown[] }>(await call(ws + "/sds", undefined, viewerToken))).toMatchObject({ documents: [] });
+    expect(await (await call(ws + "/sds", form(), secondManagerToken)).json()).toEqual({ error: "UPLOAD_CONFLICT" });
+    expect((await call(ws + "/sds", form(), tenantToken)).status).toBe(200);
     expect((await call(ws + "/sds/" + id + "/review", { verified: true, reason: "Viewer" }, viewerToken)).status).toBe(403);
     await ok(await call(ws + "/sds/" + id + "/review", { verified: true, reason: "Qualified comparison to source pages" }, reviewerToken));
     const original = await call(ws + "/sds/" + id + "/file", undefined, viewerToken);
     expect(original.headers.get("Content-Type")).toBe("application/pdf");
-    expect(await original.text()).toBe("%PDF-1.7\nFixture");
+    expect(original.headers.get("Cache-Control")).toBe("no-store");
+    expect(original.headers.get("Content-Disposition")).toContain("attachment");
+    expect(new Uint8Array(await original.arrayBuffer())).toEqual(new Uint8Array(fixture));
     expect(files.size).toBe(1);
   });
 
@@ -349,12 +600,18 @@ describe("scoped laboratory tools", () => {
     const input = { ...pair, finding: "insufficient", qualified: true, statement: "Review the product-specific source",
       conditions: "Test fixture for exact source conditions", title: "Reference", url: "https://pubchem.ncbi.nlm.nih.gov/compound/702" };
     expect((await call(ws + "/pairs", input, viewerToken)).status).toBe(403);
+    expect(await (await call(ws + "/pairs", { ...input, finding: "conditional" }, reviewerToken)).json())
+      .toEqual({ error: "PAIR_FORMULATION_REQUIRED" });
     await ok(await call(ws + "/pairs", input, reviewerToken), 201);
     const result = await ok<{ evidence: unknown[] }>(await call(ws + "/pairs?" + params, undefined, reviewerToken));
     expect(result.evidence).toHaveLength(1);
     expect(await ok(await call(ws + "/pairs?" + params, undefined, otherToken))).toMatchObject({ evidence: [] });
     expect(await ok(await call(ws + "/pairs?" + new URLSearchParams({ ids: pair.a + "," + pair.b, context: pair.context }), undefined, reviewerToken)))
       .toMatchObject({ pairs: [{ assessment: "insufficient" }] });
+    const scoped = new URLSearchParams({ ...pair, lab: "lab-a" });
+    expect((await call(ws + "/pairs?" + scoped, undefined, otherToken)).status).toBe(404);
+    expect((await call(base + "/pairs?" + scoped)).status).toBe(404);
+    expect(await ok(await admin("/pairs?" + scoped))).toMatchObject({ evidence: [{ statement: input.statement }] });
   });
 
   it("reuses mockable authoritative lookups and declines a model for a salt", async () => {
@@ -368,5 +625,67 @@ describe("scoped laboratory tools", () => {
     expect(search.compounds).toHaveLength(1);
     expect((await call(base + "/knowledge/5234/3d")).status).toBe(404);
     expect(mock.mock.calls).toHaveLength(2);
+  });
+});
+
+describe("migration and rollback compatibility", () => {
+  it("upgrades a populated 0006 database while keeping receipts, reviews, login, archive and purge workflows usable", async () => {
+    db.close();
+    db = new DatabaseSync(":memory:");
+    for (const migration of migrations.slice(0, 6)) db.exec(migration);
+    env.DB = testDatabase(db);
+    db.prepare("INSERT INTO admin_sessions(token_sha256, expires_at) VALUES (?, ?)")
+      .run(createHmac("sha256", JSON.stringify(adminPassword)).update("session:" + csrfTokenValue).digest("hex"), Math.floor(Date.now() / 1000) + 3600);
+    const approved = await submit("Historical documentation");
+    const archived = await submit("Historical archive");
+    const queued = await submit("Historical image and deletion");
+    approve(approved.id);
+    const manage = (action: string, id: string) => call("/api/admin/requests/manage", { action, ids: [id] }, undefined, true);
+    await ok(await manage("archive", archived.id));
+    const legacy = db.prepare("SELECT input_json FROM public_requests WHERE id = ?").get(approved.id);
+    const snapshot = db.prepare("SELECT approved_result_json FROM public_review_decisions WHERE request_id = ?").get(approved.id);
+    const storageKey = "requests/historical/synthetic-photo";
+    db.prepare(`INSERT INTO public_request_images(id, request_id, solution, object_key, mime_type, size_bytes)
+      VALUES (?,?,'A',?,'image/png',1)`).run(randomUUID(), queued.id, storageKey);
+    const prior = await ok(await call("/api/requests/" + approved.id, undefined, approved.trackingToken));
+    for (const migration of migrations.slice(6)) db.exec(migration);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(db.prepare("SELECT input_json FROM public_requests WHERE id = ?").get(approved.id)).toEqual(legacy);
+    expect(db.prepare("SELECT approved_result_json FROM public_review_decisions WHERE request_id = ?").get(approved.id)).toEqual(snapshot);
+    expect(await ok(await call("/api/requests/" + approved.id, undefined, approved.trackingToken))).toEqual(prior);
+    expect(await ok(await call("/api/admin/session", undefined, undefined, true))).toMatchObject({ csrfToken: csrf });
+    expect(await ok(await call("/api/admin/requests/" + approved.id, undefined, undefined, true))).toMatchObject({ status: "Approved" });
+    expect(await ok(await call("/api/admin/requests?archived=true", undefined, undefined, true))).toMatchObject({
+      requests: [{ id: archived.id }],
+    });
+    await ok(await manage("restore", archived.id));
+    const restored = await ok<{ requests: { id: string }[] }>(await call("/api/admin/requests", undefined, undefined, true));
+    expect(restored.requests.map(({ id }) => id)).toContain(archived.id);
+    await ok(await manage("delete", queued.id));
+    expect((await call("/api/requests/" + queued.id, undefined, queued.trackingToken)).status).toBe(404);
+    expect(db.prepare("SELECT object_key FROM public_request_image_deletions").get()?.object_key).toBe(storageKey);
+    const impact = await ok<OperationImpact>(await call(operation(approved), undefined, approved.trackingToken));
+    expect(impact).toMatchObject({ current: null, estimate: null, assessed: { liters: 0.75, kilograms: null } });
+  });
+
+  it("preserves 0009-era snapshots byte-for-byte and excludes them from current totals until re-reviewed", async () => {
+    const receipt = await submit();
+    await affiliate(receipt);
+    approve(receipt.id);
+    const scenario = { ...scenarioMeta, beneficiary: "institution", financial };
+    const estimate = await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken));
+    const historical = JSON.stringify({ result: { ...estimate.estimate, formulaVersion: "baseline-actual/1" } });
+    const { lastInsertRowid } = db.prepare(`INSERT INTO impact_events(request_id, state, actor, created_at, activities_json, calculation_json)
+      VALUES (?, 'verified', 'legacy reviewer', ?, ?, ?)`).run(receipt.id, new Date().toISOString(), JSON.stringify([action("preserved", 100)]), historical);
+    const current = await ok<OperationImpact>(await call(operation(receipt), undefined, receipt.trackingToken));
+    expect(current.current).toMatchObject({ reviewRequired: true, calculation: { formulaVersion: "baseline-actual/1", net: { difference: -7 } } });
+    expect((await outcome()).totals).toMatchObject({ needsRecheck: 1, verified: 0,
+      verifiedFinancial: { covered: 0, value: null }, preserved: { covered: 0, value: null } });
+    await ok(await call(ws + "/operations/" + receipt.id + "/review", {
+      ...changes(current.current?.id), decision: "correct", reason: "Checked the original records",
+      activities: [action("preserved", 100)], evidenceReference: "legacy-asset/1",
+    }, reviewerToken));
+    expect(db.prepare("SELECT calculation_json FROM impact_events WHERE id = ?").get(lastInsertRowid)?.calculation_json).toBe(historical);
+    expect((await outcome()).totals).toMatchObject({ needsRecheck: 0, verified: 1, preserved: { covered: 1, value: 0.1 } });
   });
 });

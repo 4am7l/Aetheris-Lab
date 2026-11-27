@@ -97,8 +97,8 @@ export async function managedImpact(request: Request, env: Env, route: string, s
   if (write && version) return addVersion(request, DB, scope, version);
   if (route === "/pairs") return pairEvidence(request, DB, scope);
   if (route === "/emergency") return emergency(request, DB, scope);
-  const stock = /^\/inventory(?:\/([A-Za-z0-9-]+)(\/movement)?)?$/.exec(route);
-  if (stock) return inventory(request, DB, scope, stock[1], Boolean(stock[2]));
+  const stock = /^\/inventory(?:\/([A-Za-z0-9-]+)(?:\/(movement|reconcile))?)?$/.exec(route);
+  if (stock) return inventory(request, DB, scope, stock[1], stock[2]);
   const document = /^\/sds(?:\/([A-Za-z0-9-]+)(?:\/(file|review))?)?$/.exec(route);
   if (document) return sds(request, env, scope, document[1], document[2]);
   const operation = /^\/operations\/([^/]+)(?:\/(estimate|review))?$/.exec(route);

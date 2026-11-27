@@ -14,8 +14,8 @@ import { chromium } from "playwright";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const output = path.join(root, ".wrangler", "impact-browser-results");
 fs.mkdirSync(output, { recursive: true });
-const ui = "http://127.0.0.1:5173";
-const worker = "http://127.0.0.1:8787";
+const ui = process.env.AETHERIS_TEST_UI ?? "http://127.0.0.1:5173";
+const worker = process.env.AETHERIS_DEV_WORKER_ORIGIN ?? "http://127.0.0.1:8787";
 async function responseJson(p, init) {
   const res = await fetch(worker + p, init);
   const raw = await res.text();
@@ -31,7 +31,8 @@ async function post(p, data, auth) {
 async function fixture() {
   const health = await responseJson("/api/health");
   assert.equal(health.agent, "disabled", "Start the isolated Worker with AGENT_ENABLED=false");
-  const folder = path.join(root, ".wrangler", "impact-verification", "v3", "d1");
+  const storageDirectory = path.resolve(root, process.env.AETHERIS_TEST_D1 ?? ".wrangler/impact-verification");
+  const folder = path.join(storageDirectory, "v3", "d1");
   const sqlFiles = fs.readdirSync(folder, { recursive: true }).filter(name => name.endsWith(".sqlite"));
   let db;
   for (const file of sqlFiles) {
@@ -70,22 +71,26 @@ async function fixture() {
     sources: [{ title: "PubChem · Water", url: "https://pubchem.ncbi.nlm.nih.gov/compound/962" }], reviewedAt: now,
   }), now);
   db.close();
-  const cost = (baseline, actual) => ({ baseline: [{ amount: baseline, evidence: "Local reference" }],
-    actual: [{ amount: actual, evidence: "Local documented actual" }] });
+  const cost = (baseline, actual, kind) => ({ baseline: [{ amount: baseline, evidence: "Local reference " + kind }],
+    actual: [{ amount: actual, evidence: "Local documented actual " + kind }] });
   await post("/api/impact/workspace/operations/" + receipt.id + "/estimate", { key: randomUUID(), expectedId: 0, scenario: {
     beneficiary: "institution", assumptions: "تم تسجيل السيناريو المرجعي والتدخل لهذا الاختبار.",
     references: [{ title: "دليل الاختبار", url: "https://pubchem.ncbi.nlm.nih.gov/compound/962" }], financial: {
-      purchase: cost(10, 5), disposal: cost(2, 0), handling: cost(0, 3), treatment: cost(0, 0), recovery: cost(0, 0),
+      purchase: cost(10, 5, "purchase"), disposal: cost(2, 0, "disposal"), handling: cost(0, 3, "handling"),
+      treatment: cost(0, 0, "treatment"), recovery: cost(0, 0, "recovery"),
     },
   } }, reviewer);
-  return { receipt, manager };
+  return { receipt, manager, reviewer };
 }
 
 async function main() {
-  const { receipt, manager } = await fixture();
+  const { receipt, manager, reviewer } = await fixture();
   const browser = await chromium.launch({ headless: true, executablePath: process.env.AETHERIS_TEST_CHROMIUM });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, acceptDownloads: true });
-  await context.route(/^(?!http:\/\/127\.0\.0\.1:5173|https:\/\/fonts\.(?:googleapis|gstatic)\.com\/)/, route => route.abort());
+  await context.route("**/*", (route) => {
+    const origin = new URL(route.request().url()).origin;
+    return [ui, "https://fonts.googleapis.com", "https://fonts.gstatic.com"].includes(origin) ? route.continue() : route.abort();
+  });
   await context.addInitScript(({ receipt, manager }) => {
     localStorage.setItem("aetheris.receipt.v1." + receipt.id, JSON.stringify(receipt));
     localStorage.setItem("aetheris.impact.membership", manager);
@@ -141,16 +146,40 @@ async function main() {
     await page.locator(".impact-panel").first().screenshot({ path: path.join(output,"receipt-ar-mobile.png") });
     await page.getByText("English", { exact:true }).click();
     await page.getByRole("heading",{ name:"Estimated impact", exact:true }).waitFor();
+    assert.equal(await page.locator("html").getAttribute("dir"), "ltr");
     const en = page.waitForEvent("download");
     await page.getByRole("button",{ name:"Download impact PDF", exact:true }).click();
     await (await en).saveAs(path.join(output,"operation-en.pdf"));
+    await page.getByText("Document the action taken", { exact: true }).click();
+    await page.locator('select[name="kind0"]').selectOption("preserved");
+    await page.locator('input[name="quantity0"]').fill("100");
+    await page.locator('select[name="unit0"]').selectOption("mL");
+    await page.locator('select[name="side0"]').selectOption("A");
+    await page.getByRole("button", { name: "Submit for verification", exact: true }).click();
+    await page.getByText("Pending verification", { exact: true }).first().waitFor();
+    await page.getByRole("button", { name: "Withdraw action report", exact: true }).waitFor();
+    const operation = "/api/impact/operations/" + receipt.id;
+    const pending = await responseJson(operation, { headers: { Authorization: "Bearer " + receipt.trackingToken } });
+    assert.equal(pending.current.state, "pending-verification");
+    await post("/api/impact/workspace/operations/" + receipt.id + "/review", {
+      key: randomUUID(), expectedId: pending.current.id, decision: "verify",
+      reason: "Local reviewer checked the original fixture", evidenceReference: "local/audit/" + receipt.id,
+    }, reviewer);
 
     await page.goto(ui + "/laboratory");
     await page.getByRole("heading",{ name:"Sustainability and impact", exact:true }).waitFor();
+    await page.getByRole("heading", { name: "Scenario estimates", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Verified outcomes", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Mobile dashboard overflow");
+    await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
+    await page.getByRole("button", { name: "Switch to light mode", exact: true }).waitFor();
+    await page.screenshot({ path: path.join(output, "dashboard-dark-mobile.png"), fullPage: true });
+    await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
     const csvWait = page.waitForEvent("download");
     await page.getByRole("button",{ name:"Export CSV", exact:true }).click();
     await (await csvWait).saveAs(path.join(output,"lab.csv"));
-    assert(fs.readFileSync(path.join(output,"lab.csv"),"utf8").includes(receipt.id));
+    const csv = fs.readFileSync(path.join(output,"lab.csv"),"utf8");
+    assert(csv.includes(receipt.id) && csv.includes("Estimated avoided kg CO2e from verified activity"));
     const pdfWait = page.waitForEvent("download");
     await page.getByRole("button",{ name:"Download PDF", exact:true }).click();
     await (await pdfWait).saveAs(path.join(output,"lab-en.pdf"));
@@ -176,7 +205,7 @@ async function main() {
       assert(bytes.length > 1000, "Downloaded PDF content is incomplete");
     }
     assert.deepEqual(errors, []);
-    console.log("PASS Chromium at 390 px: real local D1 catalogue, 118 elements, molar mass, comparison, matrix, anonymous dashboard, RTL receipt, EN/AR operation PDFs, lab PDF and CSV, PDF.js SDS extraction and byte-identical R2 download");
+    console.log("PASS Chromium at 390 px: local catalogue, periodic table, molar mass, comparison, matrix, personal dashboard, EN/AR and both themes, action report and review, operation PDFs, lab PDF and CSV, SDS extraction and identical private R2 download");
   } catch (err) {
     await page.screenshot({ path: path.join(output, "smoke-failure.png"), fullPage: true }).catch(() => {});
     console.log("Page errors:", errors);

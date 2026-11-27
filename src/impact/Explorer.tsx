@@ -102,19 +102,31 @@ export function Matrix({ api, scope, selected, names, storage, reviewer, directo
   const lang = useLanguage();
   const t = (en: string, ar: string) => words(lang, en, ar);
   const [cell, setCell] = useState<string[]>([]);
+  const [evidenceView, setEvidenceView] = useState("");
   const context = storage ? "storage" : "mixing";
   const items = [...selected].sort();
   const live = selected.length >= 2;
-  const matrix = useQuery({ queryKey: ["workspace", scope, "pairs", context, items], enabled: live, retry: false, gcTime: 0,
-    queryFn: ({ signal }) => api<{ pairs: { a: string; b: string; assessment: string }[] }>("/pairs?" + new URLSearchParams({ ids: items.join(","), context }), undefined, signal) });
+  const matrix = useQuery({ queryKey: ["workspace", scope, "pairs", context, items, evidenceView], enabled: live, retry: false, gcTime: 0,
+    queryFn: ({ signal }) => api<{ pairs: { a: string; b: string; assessment: string }[] }>("/pairs?" + new URLSearchParams({ ids: items.join(","), context }) + evidenceView, undefined, signal) });
   const [a, b] = cell;
   const chosen = live && a !== undefined && b !== undefined && items.includes(a) && items.includes(b);
-  const pair = useQuery({ queryKey: ["workspace", scope, "pair", context, a, b], enabled: chosen, retry: false, gcTime: 0,
-    queryFn: ({ signal }) => api<PairResult>("/pairs?" + new URLSearchParams({ a, b, context }), undefined, signal) });
+  const pair = useQuery({ queryKey: ["workspace", scope, "pair", context, a, b, evidenceView], enabled: chosen, retry: false, gcTime: 0,
+    queryFn: ({ signal }) => api<PairResult>("/pairs?" + new URLSearchParams({ a, b, context }) + evidenceView, undefined, signal) });
   return <details className="impact-details">
     <summary>{storage ? t("Storage compatibility matrix", "مصفوفة توافق التخزين") : t("Chemical compatibility matrix", "مصفوفة التوافق الكيميائي")}</summary>
     <p>{t("Qualified review is required for every pair. The matrix shows available evidence for the listed materials and conditions.",
       "تلزم مراجعة مؤهلة لكل زوج. تعرض المصفوفة الأدلة المتاحة للمواد والشروط المدرجة.")}</p>
+    {live && directory && <form className="impact-grid compact" onSubmit={(event) => {
+      event.preventDefault();
+      const choice = field(new FormData(event.currentTarget), "scope");
+      setEvidenceView(choice ? "&" + choice : "");
+    }}>
+      <LabSelect name="scope" en="Evidence scope" ar="نطاق الأدلة" value={evidenceView.slice(1)} key={evidenceView} options={[
+        ...directory.institutions.map((item) => ["institution=" + item.id, lang === "ar" ? item.nameAr : item.nameEn] as const),
+        ...directory.labs.map((item) => ["lab=" + item.id, lang === "ar" ? item.nameAr : item.nameEn] as const),
+      ]} />
+      <Submit>{t("Load evidence", "عرض الأدلة")}</Submit>
+    </form>}
     {!live && <p>{t("Select two to eight reference records to build a matrix.", "اختر من سجلين إلى ثمانية سجلات مرجعية لبناء مصفوفة.")}</p>}
     {matrix.data && <div className="impact-table"><table>
       <thead><tr><th scope="col">{t("Material", "المادة")}</th>{selected.map((id) => <th key={id} scope="col"><bdi>{names[id]}</bdi></th>)}</tr></thead>
@@ -135,7 +147,10 @@ export function Matrix({ api, scope, selected, names, storage, reviewer, directo
     </section>}
     {reviewer && chosen && <details className="impact-details">
       <summary>{t("Add qualified evidence for this pair", "إضافة أدلة مراجعة لهذا الزوج")}</summary>
-      <WriteForm key={cell.join("-")} api={api} endpoint="/pairs" build={(form) => ({
+      <WriteForm key={cell.join("-")} api={api} endpoint="/pairs" onSaved={scope === "platform" ? (result) => {
+        setEvidenceView(result.labId ? "&lab=" + result.labId
+          : result.institutionId ? "&institution=" + result.institutionId : "");
+      } : undefined} build={(form) => ({
         a, b, context, finding: field(form, "finding"), statement: field(form, "statement"),
         conditions: field(form, "conditions"), title: field(form, "title"), url: field(form, "url"),
         qualified: form.has("qualified"), institutionId: optional(form, "institutionId"), labId: optional(form, "labId"),
@@ -256,7 +271,7 @@ export function Explorer({ api = publicApi, scope = "public", reviewer, director
       <details className="impact-details" open={Boolean(cid || external) || undefined}>
         <summary>{t("Search PubChem beyond the reference catalogue", "البحث في PubChem خارج قائمة المراجع")}</summary>
         <form className="impact-grid compact" onSubmit={(event) => {
-          event.preventDefault(); setExternal(field(new FormData(event.currentTarget), "pubchem")); setComparePubChem([]);
+          event.preventDefault(); setExternal(field(new FormData(event.currentTarget), "pubchem"));
         }}>
           <LabInput name="pubchem" en="English substance name, CAS, formula or CID" ar="اسم المادة بالإنجليزية أو CAS أو الصيغة أو المعرّف" value={q} required />
           <Submit>{t("Search PubChem", "البحث في PubChem")}</Submit>
@@ -271,6 +286,9 @@ export function Explorer({ api = publicApi, scope = "public", reviewer, director
             onChange={(event) => { const checked = event.target.checked; setComparePubChem((prev) => checked ? [...prev, c.cid] : prev.filter((x) => x !== c.cid)); }} />
           {" "}{t("Compare", "مقارنة")} <bdi>{c.name}</bdi></label>
         </div>)}</div>
+        {comparePubChem.length > 0 && <Button onClick={() => setComparePubChem([])}>
+          {t("Clear PubChem comparison", "مسح مقارنة PubChem")}
+        </Button>}
         {comparePubChem.length === 2 ? <div className="impact-grid">{comparePubChem.map((x) => <Compound key={x} cid={x} api={knowledge} scope={scope} assetBase={assetBase} />)}</div> :
           cid > 0 && <Compound key={cid} cid={cid} api={knowledge} scope={scope} assetBase={assetBase} />}
       </details>

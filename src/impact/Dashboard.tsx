@@ -142,21 +142,31 @@ export function Dashboard({ api, contextKey, personal, directory, canReview, onO
     <FormError error={query.error || exportError} />
     {data && m && <>
       {!m.verified && <p className="muted">{t("There are no verified outcomes for these filters yet.", "لا توجد نتائج موثّقة لهذه المرشحات بعد.")}</p>}
+      {m.needsRecheck > 0 && <p role="status">{t("Historical outcomes awaiting re-review", "النتائج السابقة التي تنتظر إعادة المراجعة")} · {m.needsRecheck}</p>}
       <MetricCards items={[
         { title: t("Assessments", "التقييمات"), value: m.assessments },
         { title: t("Completed assessments", "التقييمات المكتملة"), value: m.completed },
         { title: t("Approved assessments", "التقييمات المعتمدة"), value: m.approved },
         { title: t("Reported actions", "الإجراءات المبلغ عنها"), value: m.reported },
         { title: t("Pending verifications", "عمليات التحقق المعلّقة"), value: m.pending },
-        { title: t("Verified outcomes", "النتائج الموثّقة"), value: m.verified },
-        { title: t("Documented preventive actions", "الإجراءات الوقائية الموثّقة"), value: m.prevention },
         { title: t("Documented incompatibilities", "حالات عدم التوافق الموثّقة"), value: m.incompatibilities },
+        { title: t("Input volume assessed", "حجم المدخلات المقيّمة"), value: numberLabel(lang, m.assessed.value, "L") },
+      ]} />
+      <h3>{t("Scenario estimates", "تقديرات السيناريوهات")}</h3>
+      <MetricCards items={[
+        { title: t("Estimated net financial impact", "صافي الأثر المالي التقديري"), value: numberLabel(lang, m.estimatedFinancial.value, currency) },
+        { title: t("Estimated avoided emissions", "تقدير الانبعاثات المتجنبة"), value: numberLabel(lang, m.carbon.value, "kg CO₂e") },
+      ]} />
+      <h3>{t("Verified outcomes", "النتائج الموثّقة")}</h3>
+      <MetricCards items={[
+        { title: t("Outcomes reviewed", "النتائج التي تمت مراجعتها"), value: m.verified },
+        { title: t("Confirmed actions", "الإجراءات المؤكدة"), value: m.confirmedActions },
+        { title: t("Documented preventive actions", "الإجراءات الوقائية الموثّقة"), value: m.prevention },
         ...([
-          ["estimatedFinancial", t("Estimated net financial impact", "صافي الأثر المالي التقديري"), currency],
           ["verifiedFinancial", t("Verified net financial savings", "صافي التوفير المالي الموثّق"), currency],
           ["purchase", t("Verified purchase savings", "توفير الشراء الموثّق"), currency],
+          ["replacement", t("Verified replacement savings", "توفير الاستبدال الموثّق"), currency],
           ["disposal", t("Verified disposal savings", "توفير التخلص الموثّق"), currency],
-          ["assessed", t("Input volume assessed", "حجم المدخلات المقيّمة"), "L"],
           ["preserved", t("Material preserved", "المواد المحفوظة"), "L"],
           ["preservedKg", t("Material mass preserved", "كتلة المواد المحفوظة"), "kg"],
           ["avoided", t("Waste avoided", "النفايات المتجنبة"), "L"],
@@ -167,7 +177,6 @@ export function Dashboard({ api, contextKey, personal, directory, canReview, onO
           ["recoveryKg", t("Waste mass sent to authorized recovery", "كتلة النفايات المرسلة لاسترجاع معتمد"), "kg"],
           ["authorizedDisposal", t("Waste sent to authorized disposal", "النفايات المرسلة لتخلص معتمد"), "L"],
           ["authorizedDisposalKg", t("Waste mass sent to authorized disposal", "كتلة النفايات المرسلة لتخلص معتمد"), "kg"],
-          ["carbon", t("Estimated avoided emissions", "تقدير الانبعاثات المتجنبة"), "kg CO₂e"],
           ["verifiedCarbon", t("Estimated emissions avoided from verified activity", "الانبعاثات المتجنبة من نشاط موثّق"), "kg CO₂e"],
         ] as [MetricName, string, string][]).map(([key, title, unit]) =>
           ({ title, value: numberLabel(lang, m[key].value, unit), detail: t("Records with usable data ", "السجلات ذات بيانات صالحة ") + m[key].covered })),
@@ -207,7 +216,7 @@ export function Dashboard({ api, contextKey, personal, directory, canReview, onO
               {personal && <div><Link to={historyUrl(item.id)}>{t("Open receipt", "فتح الإيصال")}</Link></div>}
               {!personal && item.status === "Approved" && <div><Button size="small" onClick={() => onOpen ? onOpen(item.id) : setOperation(item.id)}>{t("Open impact", "فتح الأثر")}</Button></div>}
             </td><td>{statusText(statusLabel[item.status])}</td>
-            <td>{item.state ? labLabel(lang, item.state) : "—"}</td>
+            <td>{item.reviewRequired ? t("Requires re-review", "يتطلب مراجعة جديدة") : item.state ? labLabel(lang, item.state) : "—"}</td>
             <td>{item.actions.map((x) => labLabel(lang, x)).join(" · ")}
               {item.findings.length > 0 && <details><summary>{t("Reviewed findings", "النتائج المراجعة")}</summary>
                 <ul>{item.findings.map((finding, i) => <li key={i} dir="auto">{finding}</li>)}</ul>

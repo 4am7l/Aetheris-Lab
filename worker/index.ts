@@ -1,6 +1,6 @@
 import type { D1Database, R2Bucket, ScheduledController } from "@cloudflare/workers-types";
 import {
-  publicInputSchema, publicReceiptSchema, publicRequestIdSchema, publicRequestPath,
+  submissionInputSchema, publicReceiptSchema, publicRequestIdSchema, publicRequestPath,
   publicResultSchema, type PublicRequestStatus,
 } from "../src/domain";
 import { admin } from "./admin";
@@ -82,7 +82,7 @@ async function hashToken(token: string) {
 async function submit(request: Request, env: Env) {
   const submission = await readSubmission(request);
   if (submission instanceof Response) return submission;
-  const parsed = publicInputSchema.safeParse(submission.input);
+  const parsed = submissionInputSchema.safeParse(submission.input);
   if (!parsed.success) return error("INVALID_REQUEST", 400);
   if (submission.images.length && !env.IMAGES) return error("SERVICE_UNAVAILABLE", 503);
 
@@ -245,8 +245,11 @@ export default {
       const origin = request.headers.get("Origin");
       if (origin !== null && origin !== new URL(request.url).origin) return error("FORBIDDEN", 403);
       try {
-        if (!env.DB || !env.TRACKING_LIMIT) return error("SERVICE_UNAVAILABLE", 503);
-        if (!await withinLimit(request, env.TRACKING_LIMIT, impactRateScope(pathname))) {
+        const restrictedWrite = request.method === "POST" && ["/api/impact/profile/create", "/api/impact/workspace/redeem",
+          "/api/impact/workspace/sds"].includes(pathname);
+        const limiter = restrictedWrite ? env.SUBMISSION_LIMIT : env.TRACKING_LIMIT;
+        if (!env.DB || !limiter) return error("SERVICE_UNAVAILABLE", 503);
+        if (!await withinLimit(request, limiter, impactRateScope(pathname))) {
           return error("RATE_LIMITED", 429, { "Retry-After": "60" });
         }
         return await publicImpact(request, env);

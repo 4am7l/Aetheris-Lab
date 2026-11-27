@@ -85,9 +85,9 @@ The test writes fixtures to that disposable local store and captures outputs in 
 ## Cloudflare rollout after release approval
 
 1. Identify the existing public Pages, admin Pages and Worker versions for rollback. Record a D1 Time Travel bookmark. Use the existing release configuration in [Cloudflare setup](cloudflare.md).
-2. Apply D1 migrations `0007_sustainability_reference.sql`, `0008_impact_ledger.sql` and `0009_lab_workspace.sql` in an isolated staging configuration with a separate Worker, D1 database and private R2 bucket. Run `npx wrangler d1 migrations apply DB --remote --config wrangler.staging.toml`. Set `AGENT_ENABLED=false` and omit the Gemini key for staging checks of this release.
+2. Apply D1 migrations `0007_sustainability_reference.sql`, `0008_impact_ledger.sql`, `0009_lab_workspace.sql` and `0010_impact_integrity.sql` in an isolated staging configuration with a separate Worker, D1 database and private R2 bucket. Run `npx wrangler d1 migrations apply DB --remote --config wrangler.staging.toml`. Set `AGENT_ENABLED=false` and omit the Gemini key for staging checks of this release.
 3. Release the staged Worker and both staged Pages builds. Exercise approved receipts, a cross-tenant rejection, bilingual PDF and CSV output, and private R2 access. Use only disposable fixtures.
-4. Apply the same additive migrations to the approved production D1 database in order. Deploy the approved Worker revision first. Release the matching public and admin Pages builds after checking Worker readiness. Use the operational Worker settings and service bindings already documented by the app.
+4. Follow the production sequence in the [release audit and runbook](pre-release-audit.md). It specifies deployment against the existing D1, Worker and Pages projects.
 5. Check an old approved receipt and both sign-in flows. Have the institution complete independent validation before activating any price, factor, scientific pair evidence or emergency procedure.
 
 Cloudflare references for [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/), [D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/), and [Pages branch controls](https://developers.cloudflare.com/pages/configuration/branch-build-controls/).
@@ -96,7 +96,7 @@ Cloudflare references for [D1 migrations](https://developers.cloudflare.com/d1/r
 
 1. Roll back public and admin Pages to their last known good deployments. A brief version mismatch can make the new routes unavailable, so roll back the Pages interfaces together.
 2. Roll the Worker back to the recorded compatible Worker version. Check the Workers secret and session guidance before selecting a version if the password or proxy secret changed. Check the old assessment receipt and admin routes.
-3. Retain the additive D1 tables and private SDS objects during application rollback. Restoring D1 to an earlier bookmark discards later data. Reserve a restore for an approved data recovery decision after preserving the new records and reconciling D1 and R2 references.
+3. Retain the additive D1 schema and private SDS objects during application rollback. Select the pre-sustainability application versions if the integrity checks need to be taken offline. A rollout to an earlier sustainability build can allow writes with the prior ledger rules. Restoring D1 to an earlier bookmark overwrites later data. Reserve a restore for an approved data recovery decision after preserving the new records and reconciling D1 and R2 references.
 
 Cloudflare references for [Worker rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/), [Pages rollbacks](https://developers.cloudflare.com/pages/configuration/rollbacks/), and [D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/).
 

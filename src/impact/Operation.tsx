@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Button, Card, CardContent, Chip } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PublicResult } from "../domain";
@@ -11,7 +11,7 @@ import { FormError, LabInput, LabSelect, Submit } from "./Inputs";
 import { field, numeric, optional } from "./formData";
 import { ScenarioEditor } from "./ScenarioEditor";
 import { readScenario } from "./scenarioForm";
-import { getCredential, labApi, words, type LabApi } from "./client";
+import { getCredential, keyedWrite, labApi, words, type LabApi, type PendingWrite } from "./client";
 import { labLabel, numberLabel } from "./labels";
 import "./impact.css";
 
@@ -35,6 +35,7 @@ export function CalculationView({ calculation }: { calculation: ImpactCalculatio
       { title: t("Personal savings", "التوفير الشخصي"), value: n(calculation.beneficiary === "personal" ? calculation.net.difference : null) },
       { title: t("University savings", "توفير الجامعة"), value: n(calculation.beneficiary === "institution" ? calculation.net.difference : null) },
       { title: t("Purchase savings", "توفير الشراء"), value: n(calculation.financial.purchase.difference) },
+      { title: t("Replacement savings", "توفير الاستبدال"), value: n(calculation.financial.replacement.difference) },
       { title: t("Disposal savings", "توفير التخلص"), value: n(calculation.financial.disposal.difference) },
       { title: t("Net financial impact", "صافي الأثر المالي"), value: n(calculation.net.difference) },
       { title: t("Waste avoided", "النفايات المتجنبة"), value: calculation.wasteAvoided.difference === null ? n(calculation.wasteAvoidedKg.difference, "kg") : n(calculation.wasteAvoided.difference, "L") },
@@ -70,6 +71,8 @@ function ActivityFields({ initial }: { initial?: Activity[] }) {
         <LabInput name={"date" + i} en="Action date" ar="تاريخ الإجراء" type="date" required value={initial?.[i]?.date ?? new Date().toISOString().slice(0, 10)} />
         <LabInput name={"quantity" + i} en="Measured quantity, if applicable" ar="الكمية المقاسة عند انطباقها" type="number" value={initial?.[i]?.quantity?.value} />
         <LabSelect name={"unit" + i} en="Unit" ar="الوحدة" options={units} value={initial?.[i]?.quantity?.unit ?? "L"} required />
+        <LabSelect name={"side" + i} en="Assessed input for this quantity" ar="المدخل المقيّم لهذه الكمية"
+          options={[["A", "A"], ["B", "B"]]} value={initial?.[i]?.side} />
         <LabInput name={"material" + i} en="Verified formulation ID, if known" ar="معرّف التركيبة الموثّقة إن توفر" value={initial?.[i]?.materialId} />
       </div>
       <LabInput name={"documentation" + i} en="Supporting documentation or notes" ar="المستندات الداعمة أو الملاحظات" value={initial?.[i]?.documentation} multiline />
@@ -86,6 +89,7 @@ function readActivities(form: FormData) {
     return {
       kind: field(form, "kind" + i), date: field(form, "date" + i),
       quantity: q === undefined ? undefined : { value: q, unit: field(form, "unit" + i) },
+      side: optional(form, "side" + i),
       materialId: optional(form, "material" + i), documentation: optional(form, "documentation" + i),
     };
   }).filter(({ kind }) => kind));
@@ -95,9 +99,11 @@ export function OperationDetails({ data, result }: { data: OperationImpact; resu
   const lang = useLanguage();
   const t = (en: string, ar: string) => words(lang, en, ar);
   const empty = numberLabel(lang, null);
-  const confirmed = data.current && ["verified", "corrected"].includes(data.current.state);
+  const confirmed = data.current && !data.current.reviewRequired && ["verified", "corrected"].includes(data.current.state);
+  const recheck = t("Historical calculation requires re-review", "الحساب السابق يتطلب مراجعة جديدة");
   return <>
-    <div className="button-row"><Chip label={labLabel(lang, data.current?.state ?? "estimated")} /></div>
+    <div className="button-row"><Chip label={data.current?.reviewRequired ? recheck
+      : data.current ? labLabel(lang, data.current.state) : t("No impact recorded", "لم يُسجّل أثر")} /></div>
     <MetricCards items={[
       { title: t("Input volume assessed", "حجم المدخلات المقيّمة"), value: numberLabel(lang, data.assessed.liters, "L") },
       { title: t("Input mass assessed", "كتلة المدخلات المقيّمة"), value: numberLabel(lang, data.assessed.kilograms, "kg") },
@@ -105,9 +111,10 @@ export function OperationDetails({ data, result }: { data: OperationImpact; resu
       { title: t("Preventive action verified", "الإجراء الوقائي موثّق"), value: confirmed && data.current?.activities.some((x) => x.kind === "abandoned") ? t("Yes", "نعم") : empty },
     ]} />
     <h3>{t("Estimated impact", "الأثر التقديري")}</h3>
-    {data.estimate ? <CalculationView calculation={data.estimate} /> : <p className="muted">{t("A reviewed baseline and intervention are required for impact estimates.", "يلزم اعتماد السيناريو المرجعي والتدخل لإصدار تقديرات الأثر.")}</p>}
+    {data.estimateReviewRequired && <p role="status">{recheck}</p>}
+    {data.estimate && !data.estimateReviewRequired ? <CalculationView calculation={data.estimate} /> : !data.estimate && <p className="muted">{t("A reviewed baseline and intervention are required for impact estimates.", "يلزم اعتماد السيناريو المرجعي والتدخل لإصدار تقديرات الأثر.")}</p>}
     {data.current && data.current.state !== "estimated" && <section>
-      <h3>{t("Documented outcomes", "النتائج الموثّقة")}</h3>
+      <h3>{confirmed ? t("Verified outcomes", "النتائج الموثّقة") : t("Reported outcomes", "النتائج المبلغ عنها")}</h3>
       {data.current.reason && <p dir="auto">{data.current.reason}</p>}
       <ul>{data.current.activities.map((a) => <li key={a.kind}>
         {labLabel(lang, a.kind)} · <bdi>{a.date}</bdi>{a.quantity && " · " + numberLabel(lang, a.quantity.value, a.quantity.unit)}
@@ -132,6 +139,9 @@ export function OperationDetails({ data, result }: { data: OperationImpact; resu
     {data.reviewedWaste && <details className="impact-details"><summary>{t("Reviewed waste classification", "تصنيف النفايات المراجع")}</summary><WasteAssessmentSection assessment={data.reviewedWaste} /></details>}
     {data.events.length > 0 && <details className="impact-details"><summary>{t("Impact history", "سجل الأثر")}</summary>
       <ol>{data.events.map((event) => <li key={event.id}><bdi>{new Date(event.createdAt).toLocaleString(lang)}</bdi> · {labLabel(lang, event.state)} · <bdi>#{event.id}</bdi>
+        {event.reviewRequired && <p>{recheck}</p>}
+        {event.calculation && <details><summary>{t("View stored calculation", "عرض الحساب المحفوظ")}</summary>
+          <CalculationView calculation={event.calculation} /></details>}
         {event.reason && <p dir="auto">{event.reason}</p>}</li>)}</ol>
     </details>}
   </>;
@@ -152,9 +162,10 @@ export function ReceiptImpact({ id, result }: { id: string; result: PublicResult
     } });
   const [notice, setNotice] = useState("");
   const [exportError, setExportError] = useState<unknown>();
+  const pendingWrite = useRef<PendingWrite>(null);
   const save = useMutation({
     mutationFn: ({ path, input }: { path: string; input: unknown }) => api<OperationImpact>("/" + id + path, input),
-    onSuccess: (data) => client.setQueryData(key, data),
+    onSuccess: (data) => { pendingWrite.current = null; client.setQueryData(key, data); },
     onError: () => { void query.refetch(); },
     gcTime: 0,
   });
@@ -173,7 +184,7 @@ export function ReceiptImpact({ id, result }: { id: string; result: PublicResult
     try {
       const activities = readActivities(new FormData(event.currentTarget));
       setNotice("");
-      save.mutate({ path: "/report", input: { key: crypto.randomUUID(), expectedId: data?.current?.id ?? 0, activities } });
+      save.mutate({ path: "/report", input: keyedWrite({ expectedId: data?.current?.id ?? 0, activities }, pendingWrite, "/report") });
     } catch {
       setNotice(t("Review the action dates, measured quantities, and documentation.", "راجع تواريخ الإجراءات والكميات المقاسة والمستندات."));
     }
@@ -193,16 +204,17 @@ export function ReceiptImpact({ id, result }: { id: string; result: PublicResult
         }}>{t("Download impact PDF", "تنزيل تقرير الأثر PDF")}</Button>
       </div>
       <FormError error={exportError} />
-      {!state || ["estimated", "rejected", "cancelled"].includes(state) || (state === "pending-verification" && data.current?.reason) ?
+      {data.writable && (!state || ["estimated", "rejected", "cancelled"].includes(state) || (state === "pending-verification" && data.current?.reason)) &&
         <details className="impact-details">
           <summary>{t("Document the action taken", "توثيق الإجراء المتخذ")}</summary>
           <form className="impact-form" onSubmit={submit}>
             <ActivityFields key={data.current?.id ?? "initial"} initial={data.current?.activities} />
             <Submit busy={save.isPending}>{t("Submit for verification", "إرسال للتحقق")}</Submit>
           </form>
-        </details> : state === "pending-verification" &&
+        </details>}
+      {data.writable && state === "pending-verification" &&
           <Button disabled={save.isPending} onClick={() => save.mutate({ path: "/withdraw",
-            input: { key: crypto.randomUUID(), expectedId: data.current?.id ?? 0 } })}>{t("Withdraw action report", "سحب تقرير الإجراء")}</Button>}
+            input: keyedWrite({ expectedId: data.current?.id ?? 0 }, pendingWrite, "/withdraw") })}>{t("Withdraw action report", "سحب تقرير الإجراء")}</Button>}
       <FormError error={save.error || link.error} />
       {notice && <p role="status">{notice}</p>}
     </>}
@@ -221,9 +233,11 @@ export function ReviewImpact({ id, api, scopeKey, result, readOnly }: {
   const [decision, setDecision] = useState("verify");
   const [scenario, setScenario] = useState(false);
   const [formatError, setFormatError] = useState("");
+  const pendingWrite = useRef<PendingWrite>(null);
   const save = useMutation({
     mutationFn: ({ action, payload }: { action: string; payload: unknown }) => api<OperationImpact>(route + "/" + action, payload),
     onSuccess: (data) => {
+      pendingWrite.current = null;
       client.setQueryData(key, data);
       void client.invalidateQueries({ queryKey: ["impact-overview"] });
       setScenario(false);
@@ -235,49 +249,55 @@ export function ReviewImpact({ id, api, scopeKey, result, readOnly }: {
   if (!data) return <section className="panel impact-panel"><h2>{t("Impact review", "مراجعة الأثر")}</h2>
     {query.isPending && <p role="status">{t("Loading…", "جارٍ التحميل…")}</p>}<FormError error={query.error} /></section>;
   const state = data.current?.state;
+  const pending = state === "pending-verification";
+  const final = state === "verified" || state === "corrected";
+  const choices = pending ? [["verify", "Verify", "تحقق"], ["clarify", "Clarify", "اطلب توضيحاً"], ["reject", "Reject", "ارفض"]] :
+    [["correct", "Correct", "صحّح"], ["cancel", "Cancel", "ألغِ"]];
+  const selectedDecision = choices.some(([value]) => value === decision) ? decision : choices[0][0];
+  const verifiesAction = selectedDecision === "verify" || selectedDecision === "correct";
   function submit(event: FormEvent<HTMLFormElement>, action: "review" | "estimate") {
     event.preventDefault();
     setFormatError("");
     const form = new FormData(event.currentTarget);
     try {
       const payload = {
-        key: crypto.randomUUID(), expectedId: data?.current?.id ?? 0,
+        expectedId: data?.current?.id ?? 0,
         scenario: action === "estimate" || scenario ? readScenario(form) : undefined,
         ...(action === "review" ? {
-          decision, reason: field(form, "reason"), realizedEvidence: optional(form, "realizedEvidence"),
-          activities: decision === "correct" ? readActivities(form) : undefined,
+          decision: selectedDecision, reason: field(form, "reason"), realizedEvidence: optional(form, "realizedEvidence"),
+          evidenceReference: optional(form, "evidenceReference"),
+          activities: selectedDecision === "correct" ? readActivities(form) : undefined,
         } : {}),
       };
-      save.mutate({ action, payload });
+      save.mutate({ action, payload: keyedWrite(payload, pendingWrite, action) });
     } catch {
       setFormatError(t("Check the scenario inputs, evidence and action quantities.", "تحقق من مدخلات السيناريو والأدلة وكميات الإجراءات."));
     }
   }
-  const pending = state === "pending-verification";
-  const final = state === "verified" || state === "corrected";
   return <section className="panel impact-panel">
     <h2>{readOnly ? t("Operation impact", "أثر العملية") : t("Impact review", "مراجعة الأثر")}</h2>
     <p>{t("Operation ID", "معرّف العملية")} · <bdi className="impact-wrap">{id}</bdi></p>
     <OperationDetails data={data} result={result} />
-    {!readOnly && (!state || state === "estimated") && <details className="impact-details">
+    {!readOnly && data.writable && (!state || state === "estimated") && <details className="impact-details">
       <summary>{t("Publish a reviewed estimate", "نشر تقدير مراجع")}</summary>
       <form className="impact-form" onSubmit={(e) => submit(e, "estimate")} key={data.current?.id ?? 0}>
         <ScenarioEditor />
         <Submit busy={save.isPending}>{t("Publish estimate", "نشر التقدير")}</Submit>
       </form>
     </details>}
-    {!readOnly && (pending || final) && <details className="impact-details" open={pending}>
+    {!readOnly && data.writable && (pending || final) && <details className="impact-details" open={pending}>
       <summary>{t("Record verification decision", "تسجيل قرار التحقق")}</summary>
       <form className="impact-form" key={data.current?.id} onSubmit={(e) => submit(e, "review")}>
         <div className="button-row">
-          {(pending ? [["verify", "Verify", "تحقق"], ["clarify", "Clarify", "اطلب توضيحاً"], ["reject", "Reject", "ارفض"]] :
-            [["correct", "Correct", "صحّح"], ["cancel", "Cancel", "ألغِ"]]).map(([value, en, ar]) =>
-            <Button key={value} variant={decision === value ? "contained" : "outlined"} aria-pressed={decision === value}
+          {choices.map(([value, en, ar]) =>
+            <Button key={value} variant={selectedDecision === value ? "contained" : "outlined"} aria-pressed={selectedDecision === value}
               onClick={() => { setDecision(value); setScenario(false); }}>{t(en, ar)}</Button>)}
         </div>
-        <LabInput name="reason" en="Reviewed evidence and decision reason" ar="الأدلة المراجعة وسبب القرار" required multiline />
-        {decision === "correct" && <ActivityFields initial={data.current?.activities} />}
-        {["verify", "correct"].includes(decision) && (pending || decision === "correct") && <label>
+        <LabInput name="reason" en="Decision reason visible to the receipt holder" ar="سبب القرار الظاهر لحامل الإيصال" required multiline />
+        {selectedDecision === "correct" && <ActivityFields initial={data.current?.activities} />}
+        {verifiesAction && <LabInput name="evidenceReference" en="Unique action evidence record ID" ar="معرّف سجل دليل الإجراء الفريد"
+          required={selectedDecision === "verify" && data.current?.activities.some((a) => a.kind !== "no-action")} />}
+        {verifiesAction && <label>
           <input type="checkbox" checked={scenario} onChange={(event) => setScenario(event.target.checked)} />
           {" "}{t("Include documented impact calculations", "إضافة حسابات الأثر الموثقة")}
         </label>}
@@ -285,7 +305,7 @@ export function ReviewImpact({ id, api, scopeKey, result, readOnly }: {
           <LabInput name="realizedEvidence" en="Actual activity and transaction evidence" ar="أدلة النشاط والمعاملات الفعلية" required multiline />
           <ScenarioEditor includePreservation={false} />
         </>}
-        <Submit busy={save.isPending || (pending && !["verify", "clarify", "reject"].includes(decision)) || (final && !["correct", "cancel"].includes(decision))} />
+        <Submit busy={save.isPending} />
       </form>
     </details>}
     {formatError && <p role="alert">{formatError}</p>}

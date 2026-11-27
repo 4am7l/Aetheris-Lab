@@ -6,6 +6,7 @@ import { carbonStages, currencyCode, httpsUrl, quantityUnits, referenceId, type 
 import { error, json } from "../http";
 import { audit, canManage, withinScope, type Scope } from "./access";
 import { body, decimal, longText, shortText, timestamp } from "./io";
+import type { Formulation } from "./quantities";
 
 const casSchema = z.string().regex(/^\d{2,7}-\d{2}-\d$/).refine(validCas);
 const chemicalSchema = z.strictObject({
@@ -30,11 +31,12 @@ const factorSchema = z.strictObject({
   ...versionScope, value: decimal, unit: z.enum(quantityUnits), stage: z.enum(carbonStages).optional(),
   geography: shortText.optional(), boundary: shortText.optional(), source: httpsUrl.optional(),
   publicationDate: z.iso.date().optional(), methodology: longText.optional(), uncertainty: shortText.optional(),
-  verified: z.boolean(),
-}).refine((x) => !x.verified || (x.stage && x.geography && x.boundary && x.source && x.publicationDate && x.methodology && x.uncertainty));
+  stageExclusive: z.boolean().optional(), verified: z.boolean(),
+}).refine((x) => !x.verified || (x.stage && x.geography && x.boundary && x.source && x.publicationDate && x.methodology && x.uncertainty && x.stageExclusive));
 
 const densitySchema = z.strictObject({
   ...versionScope, kgPerLiter: decimal.positive(), conditions: longText, source: httpsUrl,
+  temperatureC: z.number().min(-273.15), state: z.enum(["Liquid", "Solid"]),
 });
 
 const chemicalColumns = `id, name_ar AS nameAr, name_en AS nameEn, cas, formula, pubchem_cid AS cid,
@@ -72,10 +74,11 @@ export async function catalogDetail(db: D1Database, id: string, scope?: Scope) {
   const history = Boolean(scope && canManage(scope));
   const restrict = scope?.global ? "1" : "(v.institution_id IS NULL OR v.institution_id = ?)";
   const args = scope?.global ? [id] : [id, scope?.institutionId ?? null];
+  const invoice = scope?.global ? "v.invoice_reference" : history ? "CASE WHEN v.institution_id IS NOT NULL THEN v.invoice_reference END" : "NULL";
   const [prices, factors, densities] = await db.batch([
     db.prepare(`SELECT v.id, kind, value, currency, package_quantity AS packageQuantity, unit, status,
         supplier, effective_date AS date, created_at AS createdAt, v.supersedes,
-        ${history ? "invoice_reference" : "NULL"} AS invoice, ${history || !scope ? "source_json" : "NULL"} AS source
+        ${invoice} AS invoice, ${history || !scope ? "source_json" : "NULL"} AS source
       FROM chemical_price_versions v WHERE chemical_id = ? AND ${restrict}
       ${history ? "" : "AND NOT EXISTS (SELECT 1 FROM chemical_price_versions n WHERE n.supersedes = v.id)"}
       ORDER BY created_at DESC, id LIMIT 100`).bind(...args),
@@ -84,7 +87,8 @@ export async function catalogDetail(db: D1Database, id: string, scope?: Scope) {
       FROM carbon_factor_versions v WHERE chemical_id = ? AND ${restrict}
       ${history ? "" : "AND NOT EXISTS (SELECT 1 FROM carbon_factor_versions n WHERE n.supersedes = v.id)"}
       ORDER BY created_at DESC, id LIMIT 100`).bind(...args),
-    db.prepare(`SELECT v.id, kg_per_liter AS kgPerLiter, conditions, source_url AS url, v.supersedes
+    db.prepare(`SELECT v.id, kg_per_liter AS kgPerLiter, conditions, source_url AS url, v.supersedes,
+        measurement_temperature_c AS temperatureC, measurement_state AS state
       FROM chemical_density_versions v WHERE chemical_id = ? AND ${restrict}
       ${history ? "" : "AND NOT EXISTS (SELECT 1 FROM chemical_density_versions n WHERE n.supersedes = v.id)"}
       ORDER BY created_at DESC, id LIMIT 100`).bind(...args),
@@ -159,10 +163,12 @@ export async function addVersion(request: Request, db: D1Database, scope: Scope,
       (id, chemical_id, institution_id, value, unit, stage, geography, boundary, source_url, publication_date, methodology,
       uncertainty, source_json, status, supersedes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(...common, input.value, input.unit, input.stage ?? null, input.geography ?? null, input.boundary ?? null, input.source ?? null,
-        input.publicationDate ?? null, input.methodology ?? null, input.uncertainty ?? null, JSON.stringify({ type: "reviewer-entry" }),
+      input.publicationDate ?? null, input.methodology ?? null, input.uncertainty ?? null,
+      JSON.stringify({ type: "reviewer-entry", stageExclusive: Boolean(input.stageExclusive) }),
         input.verified ? "verified" : "unverified", input.supersedes ?? null, date)
-      : db.prepare(`INSERT INTO chemical_density_versions (id, chemical_id, institution_id, kg_per_liter, conditions, source_url, supersedes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(...common, input.kgPerLiter, input.conditions, input.source, input.supersedes ?? null, date);
+    : db.prepare(`INSERT INTO chemical_density_versions (id, chemical_id, institution_id, kg_per_liter, conditions, source_url, supersedes,
+        created_at, measurement_temperature_c, measurement_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(...common, input.kgPerLiter, input.conditions, input.source, input.supersedes ?? null, date, input.temperatureC, input.state);
   try {
     await db.batch([statement, audit(db, scope, type + "-version", id, institutionId, material.labId)]);
   } catch (cause) {
@@ -179,7 +185,7 @@ export async function calculationReferences(db: D1Database, scenario: Scenario, 
     Object.values(x).flatMap((entry) => [...entry.baseline, ...entry.actual]).filter((item) => "versionId" in item);
   const price = lines(scenario.financial);
   const carbon = lines(scenario.emissions);
-  const refs = new Map<string, Reference>();
+  const refs = new Map<string, Reference & Formulation>();
   const densities = new Map<string, Density>();
   const slots = (ids: string[]) => ids.map(() => "?").join(",");
   const material = `AND (c.institution_id IS NULL OR (c.institution_id = ? AND (c.lab_id IS NULL OR c.lab_id = ?)))`;
@@ -190,16 +196,19 @@ export async function calculationReferences(db: D1Database, scenario: Scenario, 
     const columns = type === "price" ? `v.kind, v.currency, v.package_quantity AS divisor, v.supplier, v.effective_date AS effectiveDate,
        v.invoice_reference AS invoiceReference`
       : type === "carbon" ? "v.stage, v.geography, v.boundary, v.source_url AS sourceUrl, v.methodology, v.publication_date AS publicationDate, v.uncertainty"
-        : "v.kg_per_liter AS kgPerLiter, v.conditions, v.source_url AS sourceUrl";
-    const data = type === "density" ? "" : ", v.status = 'verified' AS verified, v.value, v.unit, v.source_json AS provenance";
+        : "v.kg_per_liter AS kgPerLiter, v.conditions, v.source_url AS sourceUrl, v.measurement_temperature_c AS temperatureC, v.measurement_state AS state";
+    const verification = type === "carbon" ? " AND json_extract(v.source_json, '$.stageExclusive') = 1" : "";
+    const data = type === "density" ? "" : `, (v.status = 'verified'${verification}) AS verified, v.value, v.unit, v.source_json AS provenance`;
+    const conditions = type === "density" ? "AND v.measurement_temperature_c IS NOT NULL AND v.measurement_state IS NOT NULL" : "";
     // D1 accepts 100 bound parameters per query. Chunk selections to accommodate a full set of scenarios.
     const statements = [];
     for (let i = 0; i < ids.length; i += 90) {
       const chunk = ids.slice(i, i + 90);
       statements.push(db.prepare(`SELECT '${type}' AS type, v.id, v.chemical_id AS materialId, v.institution_id AS institutionId,
-          c.status = 'verified' AS materialVerified, c.cas, c.concentration, c.purity, c.solvent, c.formulation, ${columns}${data}
+          c.status = 'verified' AS materialVerified, c.cas, c.formula, c.concentration, c.purity, c.solvent, c.formulation,
+          c.physical_state AS physicalState, ${columns}${data}
         FROM ${versionTables[type]} v JOIN chemical_references c ON c.id = v.chemical_id
-        WHERE v.id IN (${slots(chunk)}) AND (v.institution_id IS NULL OR v.institution_id = ?) ${material}`)
+        WHERE v.id IN (${slots(chunk)}) AND (v.institution_id IS NULL OR v.institution_id = ?) ${material} ${conditions}`)
         .bind(...chunk, institutionId, institutionId, labId));
     }
     return { type, statements };
@@ -207,7 +216,7 @@ export async function calculationReferences(db: D1Database, scenario: Scenario, 
   const snapshots: unknown[] = [];
   await Promise.all(referenceQueries.map(async ({ type, statements }) => {
     if (!statements.length) return;
-    const batches = await db.batch<Reference & Density>(statements);
+    const batches = await db.batch<Reference & Density & Formulation>(statements);
     for (const { results } of batches) for (const value of results) {
       snapshots.push(value);
       if (type === "density") densities.set(value.id, value);

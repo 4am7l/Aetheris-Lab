@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Button, Chip } from "@mui/material";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLanguage } from "../text";
@@ -7,7 +7,7 @@ import { FormError, LabInput, LabSelect, Submit } from "./Inputs";
 import { field, numeric, optional } from "./formData";
 import { LabChoice, WriteForm } from "./Management";
 import { quantityUnits } from "./model";
-import { download, words, type LabApi } from "./client";
+import { download, keyedWrite, words, type LabApi, type PendingWrite } from "./client";
 import { labLabel, numberLabel } from "./labels";
 import { type SdsCandidate } from "./sds";
 
@@ -44,12 +44,17 @@ function InventoryEditor({ api, directory, item }: { api: LabApi; directory: Org
 function MovementForm({ api, id }: { api: LabApi; id: string }) {
   const lang = useLanguage();
   const [kind, setKind] = useState("received");
+  const [posted, setPosted] = useState(false);
+  const pendingWrite = useRef<PendingWrite>(null);
   const linked = ["preserved", "returned", "recovery", "disposal"].includes(kind);
-  return <WriteForm api={api} endpoint={"/inventory/" + id + "/movement"} build={(form) => ({
-    key: crypto.randomUUID(), kind, reason: field(form, "reason"), decrease: form.has("decrease"),
-    ...(linked ? { requestId: field(form, "requestId"), impactEventId: numeric(form, "impactEventId") } :
-      { quantity: { value: numeric(form, "amount"), unit: field(form, "unit") } }),
-  })}>
+  return <WriteForm api={api} endpoint={"/inventory/" + id + "/movement"}
+    onSaved={() => { pendingWrite.current = null; setPosted(true); }} build={(form) => {
+      setPosted(false);
+      return keyedWrite({ kind, reason: field(form, "reason"), decrease: form.has("decrease"),
+        ...(linked ? { requestId: field(form, "requestId"), impactEventId: numeric(form, "impactEventId") } :
+          { quantity: { value: numeric(form, "amount"), unit: field(form, "unit") } }),
+      }, pendingWrite);
+    }}>
     <div className="impact-pill-nav">{movementTypes.map(([value, en, ar]) => <Button size="small" key={value}
       aria-pressed={kind === value} variant={kind === value ? "contained" : "outlined"} onClick={() => setKind(value)}>
       {words(lang, en, ar)}
@@ -65,6 +70,7 @@ function MovementForm({ api, id }: { api: LabApi; id: string }) {
       </>}
       <LabInput name="reason" en="Movement documentation" ar="توثيق حركة المخزون" required />
     </div>
+    {posted && <p role="status">{words(lang, "Movement saved.", "تم حفظ الحركة.")}</p>}
   </WriteForm>;
 }
 
@@ -85,7 +91,11 @@ export function Inventory({ api, context, directory, editable }: {
   });
   const detail = useQuery({
     queryKey: ["workspace", context, "stock", id], enabled: Boolean(id), retry: false, gcTime: 0,
-    queryFn: ({ signal }) => api<{ item: InventoryItem; movements: { id: number; kind: string; delta: number; reason: string; impactEventId: number | null; createdAt: string }[] }>("/inventory/" + id, undefined, signal),
+    queryFn: ({ signal }) => api<{
+      item: InventoryItem;
+      movements: { id: number; kind: string; delta: number; reason: string; impactEventId: number | null; createdAt: string }[];
+      reconciliations: { movementId: number; eventId: number; delta: number }[];
+    }>("/inventory/" + id, undefined, signal),
   });
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget);
@@ -125,6 +135,14 @@ export function Inventory({ api, context, directory, editable }: {
           <MovementForm api={api} id={id} />
         </details>
       </>}
+      {detail.data.reconciliations.length > 0 && <section>
+        <h4>{t("Pending stock corrections", "تصحيحات المخزون المعلقة")}</h4>
+        <p>{t("Check the physical stock and post any documented stock adjustment before retrying.", "تحقق من المخزون الفعلي وسجّل أي تسوية موثّقة قبل إعادة المحاولة.")}</p>
+        {detail.data.reconciliations.map(({ movementId, eventId, delta }) =>
+          <div key={movementId}><bdi>#{movementId} · {numberLabel(lang, delta, detail.data.item.unit)}</bdi>
+            {editable && <WriteForm api={api} endpoint={"/inventory/" + id + "/reconcile"} build={() => ({ movementId, eventId })} />}
+          </div>)}
+      </section>}
       <h4>{t("Movement history", "سجل الحركات")}</h4>
       {detail.data.movements.length ? <ol>{detail.data.movements.map((movement) => {
         const translated = movementTypes.find(([kind]) => kind === movement.kind);

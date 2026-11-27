@@ -3,6 +3,7 @@ import {
   blankSolution,
   publicInputSchema,
   publicSolutionSchema,
+  submissionSolutionSchema,
   solutionSchema,
   solventOptions,
   validCas,
@@ -52,6 +53,16 @@ describe("structured validation", () => {
 });
 
 describe("pre-mixing solution declarations", () => {
+  it("normalizes Arabic concentrations, temperatures and quantities for new submissions and preserves uncertainty", () => {
+    const declaration = { ...solution, concentration: "٠٫٢", unit: "mol/L", temperature: "−٢٥", quantity: "٢٥٠", quantityUnit: "mL",
+      state: "Unknown", solvent: "Other", customSolvent: "ethanol and water", ph: "Not Applicable", classifications: ["Unknown"] };
+    expect(submissionSolutionSchema.parse(declaration)).toMatchObject({ concentration: "0.2", temperature: "-25", quantity: "250",
+      state: "Unknown", solvent: "Other", customSolvent: "ethanol and water", ph: "Not Applicable" });
+    expect(submissionSolutionSchema.safeParse({ ...declaration, customSolvent: undefined }).success).toBe(false);
+    expect(submissionSolutionSchema.safeParse({ ...declaration, classifications: ["Unknown", "Organic"] }).success).toBe(false);
+    expect(submissionSolutionSchema.safeParse({ ...declaration, temperature: "−٢٧٣٫١٦" }).success).toBe(false);
+    expect(submissionSolutionSchema.safeParse({ ...declaration, quantityUnit: "Unknown" }).success).toBe(false);
+  });
   it.each(solventOptions)("accepts declared, unknown and inapplicable pH for %s", (solvent) => {
     for (const ph of ["6.25", "-1.25", "15.75", "Unknown", "Not Applicable"]) {
       expect(publicSolutionSchema.parse({ ...solution, solvent, ph })).toMatchObject({ solvent, ph });

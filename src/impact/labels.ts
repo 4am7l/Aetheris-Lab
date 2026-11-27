@@ -1,4 +1,5 @@
 import { words, type LabLanguage } from "./locale";
+import { currencyPrecision } from "./model";
 
 const terms: Record<string, [string, string]> = {
   estimated: ["Estimated", "تقديري"], "action-reported": ["Action reported", "تم الإبلاغ عن الإجراء"],
@@ -29,5 +30,9 @@ export function labLabel(lang: LabLanguage, item: string) {
 }
 export function numberLabel(lang: LabLanguage, number: number | null | undefined, unit?: string) {
   if (number === null || number === undefined) return words(lang, "Not available", "غير متاح");
-  return new Intl.NumberFormat(lang, { maximumSignificantDigits: 7 }).format(number) + (unit ? " " + unit : "");
+  const digits = unit && /^[A-Z]{3}$/.test(unit) ? currencyPrecision(unit) : null;
+  const format = digits === null ? { maximumSignificantDigits: 7 } : {
+    minimumFractionDigits: digits, maximumFractionDigits: digits,
+  };
+  return new Intl.NumberFormat(lang, format).format(number) + (unit ? " " + unit : "");
 }

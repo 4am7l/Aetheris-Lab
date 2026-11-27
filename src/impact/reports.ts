@@ -123,16 +123,18 @@ function calculationRows(calculation: ImpactCalculation | null, lang: LabLanguag
 
 export function operationPdf(id: string, data: OperationImpact, lang: LabLanguage) {
   const t = (en: string, ar: string) => words(lang, en, ar);
-  const verified = data.current && ["verified", "corrected"].includes(data.current.state);
+  const verified = data.current && !data.current.reviewRequired && ["verified", "corrected"].includes(data.current.state);
+  const recheck = t("Historical calculation requires re-review", "الحساب السابق يتطلب مراجعة جديدة");
   const amount = (value: number | null, unit: string) => value === null ? numberLabel(lang, null) : ltr(lang, numberLabel(lang, value, unit));
   const rows: Row[] = [
     { text: t("Operation", "العملية") + "  ·  " + ltr(lang, id) },
     { text: t("Input volume assessed", "حجم المدخلات المقيّمة") + "  ·  " + amount(data.assessed.liters, "L") },
     { text: t("Input mass assessed", "كتلة المدخلات المقيّمة") + "  ·  " + amount(data.assessed.kilograms, "kg") },
     { text: t("Expected impact", "الأثر المتوقع"), heading: true },
-    ...calculationRows(data.estimate, lang),
+    ...(data.estimateReviewRequired ? [{ text: recheck }] : calculationRows(data.estimate, lang)),
     { text: t("Action and verification", "الإجراء والتحقق"), heading: true },
-    { text: labLabel(lang, data.current?.state ?? "estimated") + (data.current ? "  ·  " + ltr(lang, data.current.createdAt.slice(0, 10)) : "") },
+    { text: data.current ? (data.current.reviewRequired ? recheck : labLabel(lang, data.current.state)) + "  ·  " + ltr(lang, data.current.createdAt.slice(0, 10)) :
+      t("No impact recorded", "لم يُسجّل أثر") },
     ...(data.current?.activities.map((item) => ({ text: labLabel(lang, item.kind) + "  ·  " + ltr(lang, item.date)
       + (item.quantity ? "  ·  " + ltr(lang, numberLabel(lang, item.quantity.value, item.quantity.unit)) : "") })) ?? []),
     ...(verified ? calculationRows(data.current?.calculation ?? null, lang) : []),
@@ -167,12 +169,17 @@ export function overviewPdf(data: ImpactOverview, lang: LabLanguage, scope: stri
     { text: scope }, { text: period },
     { text: t("Assessments", "التقييمات") + "  ·  " + data.totals.assessments + "   " + t("Approved", "المعتمدة") + "  ·  " + data.totals.approved },
     { text: t("Verified outcomes", "النتائج الموثّقة") + "  ·  " + data.totals.verified + "   " + t("Pending outcomes", "النتائج المعلقة") + "  ·  " + data.totals.pending },
+    { text: t("Confirmed actions", "الإجراءات المؤكدة") + "  ·  " + data.totals.confirmedActions + "   " +
+      t("Historical outcomes awaiting re-review", "النتائج السابقة التي تنتظر إعادة المراجعة") + "  ·  " + data.totals.needsRecheck },
     metric(t("Estimated financial impact", "الأثر المالي التقديري"), data.totals.estimatedFinancial, data.currency),
     metric(t("Verified net financial impact", "صافي الأثر المالي الموثّق"), data.totals.verifiedFinancial, data.currency),
     metric(t("Purchase savings", "توفير الشراء"), data.totals.purchase, data.currency),
+    metric(t("Replacement savings", "توفير الاستبدال"), data.totals.replacement, data.currency),
     metric(t("Disposal savings", "توفير التخلص"), data.totals.disposal, data.currency),
     metric(t("Waste avoided", "النفايات المتجنبة"), data.totals.avoided, "L"),
+    metric(t("Waste mass avoided", "كتلة النفايات المتجنبة"), data.totals.avoidedKg, "kg"),
     metric(t("Materials preserved", "المواد المحفوظة"), data.totals.preserved, "L"),
+    metric(t("Material mass preserved", "كتلة المواد المحفوظة"), data.totals.preservedKg, "kg"),
     metric(t("Waste segregated", "النفايات المفروزة"), data.totals.segregated, "L"),
     metric(t("Waste sent to recovery", "النفايات المرسلة للاسترجاع"), data.totals.recovery, "L"),
     metric(t("Waste sent to disposal", "النفايات المرسلة للتخلص"), data.totals.authorizedDisposal, "L"),

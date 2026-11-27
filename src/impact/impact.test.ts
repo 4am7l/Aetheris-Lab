@@ -6,8 +6,10 @@ import { extractSdsCandidates } from "./sds";
 import { parsePubChemSdf } from "../../worker/sources";
 
 const meta = { assumptions: "Documented baseline and intervention", references: [{ title: "Reference file" }] };
-const amount = (value: number) => ({ amount: value, evidence: "Cost record" });
-const cost = (baseline: number, actual: number) => ({ baseline: [amount(baseline)], actual: [amount(actual)] });
+const amount = (value: number, evidence = "Cost record") => ({ amount: value, evidence });
+const cost = (baseline: number, actual: number, record = "Cost") => ({
+  baseline: [amount(baseline, record + " baseline")], actual: [amount(actual, record + " actual")],
+});
 const zero = [{ zero: true as const, evidence: "This stage had zero activity" }];
 const priced: Reference = { id: "price-a", materialId: "verified-a", institutionId: "university", type: "price",
   kind: "purchase", currency: "JOD", value: 20, divisor: 1, unit: "L", supplier: "Supplier", verified: true,
@@ -31,9 +33,28 @@ describe("deterministic impact", () => {
     expect(result.wasteAvoided.difference).toBeNull();
   });
 
+  it("rejects duplicated procurement and cost documents before computing rounded currency differences", () => {
+    expect(scenarioSchema.safeParse({ ...meta, financial: { purchase: cost(1, 0), replacement: cost(1, 0) } }).success).toBe(false);
+    expect(scenarioSchema.safeParse({ ...meta, financial: {
+      purchase: { baseline: [amount(3, "Invoice  88")], actual: [amount(0)] },
+      disposal: { baseline: [amount(3, "invoice 88")], actual: [amount(0)] },
+    } }).success).toBe(false);
+    for (const [currency, expected] of [["JOD", 0.234], ["JPY", 0], ["USD", 0.23]] as const) {
+      const scenario = scenarioSchema.parse({ ...meta, currency, financial: {
+        purchase: { baseline: [amount(0.1014, "Line A"), amount(0.1401, "Line B")], actual: [amount(0.008)] },
+      } });
+      expect(calculateImpact(scenario, environment).financial.purchase.difference).toBe(expected);
+    }
+    expect(liters({ value: 1, unit: "kg" }, 0)).toBeNull();
+    expect(liters({ value: 1, unit: "kg" }, Number.NaN)).toBeNull();
+    expect(kilograms({ value: 1, unit: "L" }, -1)).toBeNull();
+    expect(kilograms({ value: 1, unit: "L" }, Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
   it("separates purchase from disposal, counts handling once, and preserves negative net costs", () => {
     const scenario = scenarioSchema.parse({ ...meta, financial: {
-      purchase: cost(3, 0), disposal: cost(1, 0), handling: cost(0, 8), treatment: cost(0, 2), recovery: cost(0, 1),
+      purchase: cost(3, 0, "Purchase"), disposal: cost(1, 0, "Disposal"), handling: cost(0, 8, "Handling"),
+      treatment: cost(0, 2, "Treatment"), recovery: cost(0, 1, "Recovery"),
     } });
     const result = calculateImpact(scenario, environment);
     expect(result.financial.purchase.difference).toBe(3);
@@ -87,6 +108,25 @@ describe("deterministic impact", () => {
     } } });
     expect(calculateImpact(withActual, { ...context, references: new Map([[factor.id, factor], [conflicting.id, conflicting]]) })
       .avoidedCo2e.difference).toBeNull();
+  });
+
+  it("excludes repeated lifecycle boundaries and factors published after the action", () => {
+    const manufacturing: Reference = { id: "factory", materialId: priced.materialId, institutionId: null, type: "carbon",
+      stage: "manufacturing", geography: "global", boundary: "Factory gate", value: 3, unit: "L",
+      verified: true, materialVerified: true, publicationDate: "2026-01-01" };
+    const transport: Reference = { ...manufacturing, id: "transport", stage: "transportation", boundary: " factory  GATE " };
+    const phase = (versionId: string) => ({ baseline: [{ materialId: priced.materialId, versionId, quantity: { value: 1, unit: "L" } }], actual: zero });
+    const scenario = scenarioSchema.parse({ ...meta, emissions: {
+      manufacturing: phase(manufacturing.id), transportation: phase(transport.id), treatment: { baseline: zero, actual: zero },
+      disposal: { baseline: zero, actual: zero },
+    } });
+    const versionContext = (entry: Reference) => ({ ...environment, references: new Map<string, Reference>([[manufacturing.id, entry], [transport.id, transport]]) });
+    const calculation = calculateImpact(scenario, versionContext(manufacturing));
+    expect(calculation.emissions.manufacturing.difference).toBeNull();
+    expect(calculation.emissions.transportation.difference).toBeNull();
+    expect(calculation.avoidedCo2e.difference).toBeNull();
+    const future = { ...manufacturing, publicationDate: "2027-01-01" };
+    expect(calculateImpact(scenario, versionContext(future)).emissions.manufacturing.difference).toBeNull();
   });
 });
 
