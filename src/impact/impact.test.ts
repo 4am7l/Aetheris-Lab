@@ -39,6 +39,10 @@ describe("deterministic impact", () => {
       purchase: { baseline: [amount(3, "Invoice  88")], actual: [amount(0)] },
       disposal: { baseline: [amount(3, "invoice 88")], actual: [amount(0)] },
     } }).success).toBe(false);
+    const rated = { materialId: priced.materialId, versionId: priced.id, quantity: { value: 1, unit: "L" } };
+    expect(scenarioSchema.safeParse({ ...meta, financial: { purchase: {
+      baseline: [amount(10), rated], actual: [amount(0)],
+    } } }).success).toBe(false);
     for (const [currency, expected] of [["JOD", 0.234], ["JPY", 0], ["USD", 0.23]] as const) {
       const scenario = scenarioSchema.parse({ ...meta, currency, financial: {
         purchase: { baseline: [amount(0.1014, "Line A"), amount(0.1401, "Line B")], actual: [amount(0.008)] },

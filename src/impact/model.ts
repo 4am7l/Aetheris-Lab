@@ -56,7 +56,11 @@ export const scenarioSchema = z.strictObject({
     const evidence = new Set<string>();
     for (const kind of financialKinds) {
       const materials = new Set<string>();
-      for (const line of input.financial[kind]?.[phase] ?? []) {
+      const lines = input.financial[kind]?.[phase] ?? [];
+      if (lines.some((line) => "versionId" in line) && lines.some((line) => "amount" in line && line.amount > 0)) {
+        ctx.addIssue({ code: "custom", path: ["financial", kind, phase], message: "Use one cost basis per category and scenario phase." });
+      }
+      for (const line of lines) {
         const key = "amount" in line ? evidenceKey(line.evidence) : line.materialId;
         const seen = "amount" in line ? evidence : materials;
         if ("amount" in line ? line.amount === 0 : line.quantity.value === 0) continue;

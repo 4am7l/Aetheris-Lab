@@ -350,6 +350,29 @@ describe("reviewed calculations and outcomes", () => {
     expect((await outcome()).totals.purchase).toEqual({ value: 4.2, covered: 1 });
   });
 
+  it("prevents equivalent catalogue entries from reusing one action quantity", async () => {
+    const ids = [await formulation(), await formulation({ formulation: "Equivalent supplier lot" })];
+    const receipt = await submit();
+    await affiliate(receipt);
+    approve(receipt.id);
+    const pending = await ok<OperationImpact>(await report(receipt, {
+      ...changes(), activities: [{ ...action("preserved", 100), side: "A" }],
+    }));
+    const baseline = [];
+    for (const [index, materialId] of ids.entries()) {
+      const { id: versionId } = await ok<{ id: string }>(await call(ws + "/versions/price", { chemicalId: materialId, currency: "JOD",
+        kind: "purchase", packageQuantity: 1, unit: "L", verified: true, value: 40, invoice: "Fixture invoice " + index, date: actualDate,
+      }, tenantToken), 201);
+      baseline.push({ materialId, versionId, quantity: { value: 80, unit: "mL" } });
+    }
+    const response = await verify(receipt, pending, { ...scenarioMeta, beneficiary: "institution",
+      financial: { purchase: { baseline, actual: caseFor(0, 0).actual } },
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ error: "SCENARIO_ACTION_QUANTITY" });
+    expect((await outcome()).totals).toMatchObject({ pending: 1, verified: 0 });
+  });
+
   it("verifies only stage-exclusive carbon factors and exports verified activity estimates separately", async () => {
     const materialId = await formulation();
     const carbon = { chemicalId: materialId, value: 3, unit: "L", stage: "manufacturing", geography: "JO",
@@ -452,12 +475,15 @@ describe("reviewed calculations and outcomes", () => {
     expect((await verify(receipt, pending, { ...scenarioMeta, financial })).status).toBe(422);
     const clarified = await ok<OperationImpact>(await verify(receipt, pending, undefined, { decision: "clarify" }));
     expect(clarified.current).toMatchObject({ state: "pending-verification", reason: "Qualified review of activity records" });
+    expect((await outcome()).totals).toMatchObject({ pending: 1, verified: 0, confirmedActions: 0 });
     const second = await ok<OperationImpact>(await report(receipt, { ...changes(clarified.current?.id), activities: [action("no-action")] }));
     const rejection = await ok<OperationImpact>(await verify(receipt, second, undefined, { decision: "reject" }));
     expect(rejection.current?.state).toBe("rejected");
+    expect((await outcome()).totals).toMatchObject({ pending: 0, verified: 0, confirmedActions: 0 });
     const third = await ok<OperationImpact>(await report(receipt, { ...changes(rejection.current?.id), activities: [action("no-action")] }));
     const cancelled = await ok<OperationImpact>(await call(operation(receipt) + "/withdraw", changes(third.current?.id), receipt.trackingToken));
     expect(cancelled.current?.state).toBe("cancelled");
+    expect((await outcome()).totals).toMatchObject({ pending: 0, verified: 0, confirmedActions: 0 });
     const fourth = await ok<OperationImpact>(await report(receipt, { ...changes(cancelled.current?.id), activities: [action("no-action")] }));
     const confirmed = await ok<OperationImpact>(await verify(receipt, fourth));
     expect(confirmed.current?.state).toBe("verified");

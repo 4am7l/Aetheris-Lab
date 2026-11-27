@@ -195,6 +195,7 @@ export function validateScenario(
     const isProcurement = kind === "purchase" || kind === "replacement" || kind === "manufacturing";
     const eligible = isProcurement ? procurementKinds : [...procurementKinds, "segregation", "disposal", "other"];
     if (!activities.some((action) => eligible.includes(action.kind))) return "SCENARIO_ACTION_MISMATCH";
+    const avoidedAmounts: Allocation[] = [];
     for (const [materialId, allocation] of modeled.baseline) {
       const actual = modeled.actual.get(materialId);
       if (actual && actual.unit !== allocation.unit) return "SCENARIO_QUANTITY_UNSUPPORTED";
@@ -202,7 +203,21 @@ export function validateScenario(
       // A segregation entry can overlap a terminal action, so use its own capacity.
       const terminal = documentedCapacity(activities, allocation, eligible.filter((key) => key !== "segregation"), materialId);
       const segregation = isProcurement ? 0 : documentedCapacity(activities, allocation, ["segregation"], materialId);
-      if (avoided > 0 && !fits(avoided, Math.max(terminal, segregation))) return "SCENARIO_ACTION_QUANTITY";
+      if (avoided <= 0) continue;
+      if (!fits(avoided, Math.max(terminal, segregation))) return "SCENARIO_ACTION_QUANTITY";
+      avoidedAmounts.push({ ...allocation, value: avoided });
+    }
+    // Different catalogue versions can describe the same inventory. A generic action has one capacity across all rate lines.
+    const documented = activities.filter((action) => eligible.includes(action.kind) && action.quantity);
+    for (const unit of ["L", "kg"] as const) {
+      const allocated = avoidedAmounts.filter((item) => item.unit === unit);
+      for (const scope of [undefined, ...sides] as const) {
+        const required = allocated.filter((item) => !scope || item.side === scope).reduce((sum, item) => sum + item.value, 0);
+        const available = documented.filter((action) => !scope || !action.side || action.side === scope);
+        const sum = (segregation: boolean) => available.filter((a) => (a.kind === "segregation") === segregation)
+          .reduce((total, a) => total + (unitsIn(a.quantity!, unit) ?? 0), 0);
+        if (!fits(required, Math.max(sum(false), sum(true)))) return "SCENARIO_ACTION_QUANTITY";
+      }
     }
   }
   if (activities) {
