@@ -22,6 +22,7 @@ function saveReport(title: string, language: LabLanguage, rows: Row[], name: str
   const rtl = language === "ar";
   const margin = 56;
   const usable = width - margin * 2;
+  const lastLine = height - margin - 35;
   let y = 0;
   let pageNumber = 0;
   const links: { y: number; height: number; url: string }[] = [];
@@ -76,13 +77,19 @@ function saveReport(title: string, language: LabLanguage, rows: Row[], name: str
     return out;
   }
   init();
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     format(row.heading ? 19 : 15, row.heading);
     const rowRtl = rtl && !/^(?:https?:\/\/|[A-Za-z0-9-]{24,}$)/.test(row.text);
     const lines = wrap(row.text);
+    const next = rows[index + 1];
+    if (row.heading && next && y + 12 + 26 * lines.length + (next.heading ? 12 : 0) > lastLine) {
+      flush();
+      init();
+      format(19, true);
+    }
     if (row.heading) y += 12;
     for (const line of lines) {
-      if (y > height - margin - 35) { flush(); init(); format(row.heading ? 19 : 15, row.heading); }
+      if (y > lastLine) { flush(); init(); format(row.heading ? 19 : 15, row.heading); }
       ctx.fillStyle = row.heading ? "#136458" : row.link ? "#135573" : "#172520";
       ctx.fillText(line, direction(rowRtl), y);
       if (row.link) links.push({ y: y - 17, height: 23, url: row.link });
