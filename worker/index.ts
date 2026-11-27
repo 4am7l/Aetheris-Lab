@@ -1,6 +1,6 @@
 import type { D1Database, R2Bucket, ScheduledController } from "@cloudflare/workers-types";
 import {
-  publicInputSchema, publicReceiptSchema, publicRequestIdSchema, publicRequestPath,
+  submissionInputSchema, publicReceiptSchema, publicRequestIdSchema, publicRequestPath,
   publicResultSchema, type PublicRequestStatus,
 } from "../src/domain";
 import { admin } from "./admin";
@@ -12,6 +12,8 @@ import {
 } from "./auth";
 import { error, hex, json } from "./http";
 import { deleteQueuedImages, readSubmission, storeImages } from "./images";
+import { platform } from "./impact/access";
+import { managedImpact, publicImpact } from "./impact/routes";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -54,11 +56,22 @@ async function health(env: Env) {
   }, ready ? 200 : 503);
 }
 
-async function withinLimit(request: Request, limiter: RateLimiter) {
+async function withinLimit(request: Request, limiter: RateLimiter, namespace = "") {
   // Cloudflare provides this header on direct ingress. Treat missing IPs as a shared bucket.
   const key = request.headers.get("CF-Connecting-IP") || "unknown-client";
-  const { success } = await limiter.limit({ key });
+  const { success } = await limiter.limit({ key: namespace + key });
   return success;
+}
+
+function impactRateScope(pathname: string) {
+  const [, , , feature, workspace] = pathname.split("/");
+  if (feature === "workspace") {
+    const separate = ["redeem", "inventory", "sds", "chemicals", "pairs", "knowledge"];
+    return separate.includes(workspace) ? "impact-workspace-" + workspace + ":" : "impact-workspace:";
+  }
+  if (["chemicals", "knowledge", "pictograms", "pairs"].includes(feature)) return "impact-reference:";
+  if (feature === "profile" || feature === "personal") return "impact-profile:";
+  return "impact-operation:";
 }
 
 async function hashToken(token: string) {
@@ -69,7 +82,7 @@ async function hashToken(token: string) {
 async function submit(request: Request, env: Env) {
   const submission = await readSubmission(request);
   if (submission instanceof Response) return submission;
-  const parsed = publicInputSchema.safeParse(submission.input);
+  const parsed = submissionInputSchema.safeParse(submission.input);
   if (!parsed.success) return error("INVALID_REQUEST", 400);
   if (submission.images.length && !env.IMAGES) return error("SERVICE_UNAVAILABLE", 503);
 
@@ -148,6 +161,9 @@ async function reviewApi(request: Request, env: Env, pathname: string) {
   if (request.method !== "GET" && !hasCsrfToken(request, reviewer.csrfToken)) return error("FORBIDDEN", 403);
   if (pathname === "/api/admin/session" && request.method === "GET") return json(sessionInfo(reviewer.csrfToken));
   if (pathname === "/api/admin/auth/logout" && request.method === "POST") return logout(env.DB, reviewer.tokenHash);
+  if (pathname.startsWith("/api/admin/impact/")) {
+    return managedImpact(request, env, pathname.slice("/api/admin/impact".length), platform(reviewerId));
+  }
   return admin(request, env, reviewerId);
 }
 
@@ -224,6 +240,22 @@ export default {
     const isHealth = pathname === "/api/health";
     if (isHealth || pathname === publicRequestPath || trackingId !== undefined) {
       return publicApi(request, env, trackingId, isHealth);
+    }
+    if (pathname.startsWith("/api/impact/")) {
+      const origin = request.headers.get("Origin");
+      if (origin !== null && origin !== new URL(request.url).origin) return error("FORBIDDEN", 403);
+      try {
+        const restrictedWrite = request.method === "POST" && ["/api/impact/profile/create", "/api/impact/workspace/redeem",
+          "/api/impact/workspace/sds"].includes(pathname);
+        const limiter = restrictedWrite ? env.SUBMISSION_LIMIT : env.TRACKING_LIMIT;
+        if (!env.DB || !limiter) return error("SERVICE_UNAVAILABLE", 503);
+        if (!await withinLimit(request, limiter, impactRateScope(pathname))) {
+          return error("RATE_LIMITED", 429, { "Retry-After": "60" });
+        }
+        return await publicImpact(request, env);
+      } catch {
+        return error("SERVICE_UNAVAILABLE", 503);
+      }
     }
     if (pathname.startsWith("/api/")) return json(unavailable, 503);
     return error("NOT_FOUND", 404);

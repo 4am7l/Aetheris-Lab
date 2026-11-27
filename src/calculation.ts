@@ -62,3 +62,7 @@ export function isSaltBalance(
 ): calculation is SodiumChlorideBalance {
   return calculation.model.id === "dilute-aqueous-nacl";
 }
+
+export function soluteConcentration(concentration: number, stockVolume: number, measuredFinalVolume: number) {
+  return concentration * (stockVolume / measuredFinalVolume);
+}

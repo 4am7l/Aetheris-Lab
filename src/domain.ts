@@ -38,10 +38,13 @@ export function solventName({ solvent, customSolvent }: Pick<Solution, "solvent"
 
 const decimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 const finiteDecimal = (value: string) => decimal.test(value) && Number.isFinite(Number(value));
-const submittedNumber = z.string().trim().max(64).transform((value) => value
-  .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
-  .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
-  .replaceAll("٫", ".").replaceAll("−", "-"));
+function localDecimal(value: string) {
+  return value
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replaceAll("٫", ".").replaceAll("−", "-");
+}
+const submittedNumber = z.string().trim().max(64).transform(localDecimal);
 const knownOrUnknown = z
   .string()
   .trim()
@@ -176,6 +179,27 @@ export const publicSolutionSchema = solutionSchema.strict().superRefine((value, 
 export const publicInputSchema = requestInputSchema.strict().extend({
   a: publicSolutionSchema,
   b: publicSolutionSchema,
+});
+
+// Retain the stored-request reader for older receipts, reviews and calculation snapshots.
+export const submissionSolutionSchema = z.preprocess((input) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const fields = { ...input } as Record<string, unknown>;
+  for (const field of ["concentration", "quantity", "temperature"]) {
+    if (typeof fields[field] === "string") fields[field] = localDecimal(fields[field]);
+  }
+  return fields;
+}, publicSolutionSchema.superRefine((value, ctx) => {
+  if (value.solvent === "Other" && !value.customSolvent) {
+    ctx.addIssue({ code: "custom", path: ["customSolvent"], message: "Enter the solvent name or select Unknown." });
+  }
+  if (value.classifications?.includes("Unknown") && value.classifications.length > 1) {
+    ctx.addIssue({ code: "custom", path: ["classifications"], message: "Select Unknown or provide your declared classifications." });
+  }
+}));
+export const submissionInputSchema = requestInputSchema.strict().extend({
+  a: submissionSolutionSchema,
+  b: submissionSolutionSchema,
 });
 
 export const publicRequestPath = "/api/requests";

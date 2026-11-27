@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   createdReceiptSchema,
-  publicInputSchema,
+  submissionInputSchema,
   publicReceiptSchema,
   publicRequestIdSchema,
   publicRequestMaxBytes,
@@ -86,7 +86,7 @@ async function readJson(response: Response) {
 }
 
 export async function submitRequest(input: RequestInput, photos?: { imageA?: File; imageB?: File }) {
-  const parsed = publicInputSchema.safeParse(input);
+  const parsed = submissionInputSchema.safeParse(input);
   if (!parsed.success) throw new RequestError("validation");
   const body = JSON.stringify(parsed.data);
   if (new TextEncoder().encode(body).length > publicRequestMaxBytes) {

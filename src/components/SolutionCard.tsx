@@ -11,7 +11,7 @@ import {
   chemicalClassifications,
   hasPurity,
   notApplicable,
-  publicSolutionSchema,
+  submissionSolutionSchema,
   solventOption,
   solventOptions,
   unknown,
@@ -89,7 +89,7 @@ export function SolutionCard({
   }
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    const parsed = publicSolutionSchema.safeParse({
+    const parsed = submissionSolutionSchema.safeParse({
       ...form,
       ph: form.ph ?? unknown,
       purity: hasPurity(form.solvent) ? form.purity?.trim() || unknown : undefined,
@@ -98,7 +98,7 @@ export function SolutionCard({
     if (!parsed.success) {
       setErrors(
         Object.fromEntries(
-          parsed.error.issues.map((i) => [String(i.path[0]), i.message]),
+          parsed.error.issues.map((i) => [String(i.path[0]), language === "ar" ? t("submissionInvalid") : i.message]),
         ),
       );
       return;
@@ -157,7 +157,8 @@ export function SolutionCard({
     >
       {options.map((v) => (
         <option key={v} value={v}>
-          {v === "Unknown" ? t("unknown") : v}
+          {v === "Unknown" ? t("unknown") : key === "state" && language === "ar"
+            ? ({ Liquid: "سائل", Solid: "صلب", Gas: "غاز" } as Record<string, string>)[v] : v}
         </option>
       ))}
     </TextField>
@@ -226,7 +227,8 @@ export function SolutionCard({
               </span>
               <span>
                 {t("state")}
-                <strong>{value.state}</strong>
+                <strong>{value.state === unknown ? t("unknown") : language === "ar"
+                  ? { Liquid: "سائل", Solid: "صلب", Gas: "غاز" }[value.state] : value.state}</strong>
               </span>
               <span>
                 {t("identifySource")}
@@ -385,7 +387,7 @@ export function SolutionCard({
                 {solventOptions.map((option) => <option key={option} value={option}>{solventLabels[option][language]}</option>)}
               </TextField>
               {selectedSolvent === "Other" && <TextField id={`input-${letter}-custom-solvent`} fullWidth required
-                label={t("customSolvent")} value={customSolvent} error={Boolean(errors.customSolvent)}
+                label={t("customSolvent")} value={customSolvent} error={Boolean(errors.customSolvent)} helperText={errors.customSolvent}
                 slotProps={{ htmlInput: { maxLength: 200, dir: "auto" } }}
                 onChange={(event) => setForm((current) => ({ ...current, solvent: "Other", customSolvent: event.target.value }))} />}
               {hasPurity(selectedSolvent) && <TextField id={`input-${letter}-purity`} fullWidth
@@ -427,14 +429,15 @@ export function SolutionCard({
                   {chemicalClassifications.map((classification) => (
                     <FormControlLabel key={classification} label={classificationLabels[classification][language]}
                       control={<Checkbox size="small" checked={form.classifications?.includes(classification) ?? false}
-                        onChange={(_, checked) => setForm((current) => ({
-                          ...current,
-                          classifications: checked ? [...(current.classifications ?? []), classification]
-                            : current.classifications?.filter((item) => item !== classification),
-                          customClassification: !checked && classification === "Other" ? undefined : current.customClassification,
-                        }))} />} />
+                        onChange={(_, checked) => setForm((current) => {
+                          const labels = (current.classifications ?? []).filter((item) => item !== classification && (!checked || item !== unknown));
+                          const classifications: Solution["classifications"] = checked && classification === unknown ? [unknown] : checked ? [...labels, classification] : labels;
+                          return { ...current, classifications,
+                            customClassification: classifications.includes("Other") ? current.customClassification : undefined };
+                        })} />} />
                   ))}
                 </div>
+                {errors.classifications && <p role="alert">{errors.classifications}</p>}
                 {form.classifications?.includes("Other") && <TextField id={`input-${letter}-custom-classification`} fullWidth
                   label={t("customClassification")} value={form.customClassification ?? ""}
                   slotProps={{ htmlInput: { maxLength: 200, dir: "auto" } }}

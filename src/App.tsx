@@ -27,11 +27,18 @@ const Requests = lazy(() => import("./pages/Requests"));
 const RequestDetail = lazy(() => import("./pages/RequestDetail"));
 const Receipt = lazy(() => import("./pages/Receipt"));
 const About = lazy(() => import("./pages/About"));
+const PersonalImpact = lazy(() => import("./impact/Personal"));
+const LaboratoryWorkspace = lazy(() => import("./impact/Workspace"));
+const ChemicalExplorer = lazy(() => import("./impact/Explorer"));
+const ScienceTools = lazy(() => import("./impact/Tools"));
 const nav = [
   ["/", "home", "space_dashboard"],
   ["/analysis", "analysis", "science"],
   ["/library", "library", "dictionary"],
   ["/requests", "requests", "assignment"],
+  ["/impact", "personalImpactNav", "monitoring"],
+  ["/laboratory", "laboratoryWorkspaceNav", "biotech"],
+  ["/tools", "scienceToolsNav", "calculate"],
   ["/about", "about", "info"],
 ] as const;
 function preference(key: string, fallback: string) {
@@ -258,6 +265,7 @@ export default function App() {
                           <Route path="/" element={<Home />} />
                           <Route path="/analysis" element={<Analysis />} />
                           <Route path="/library" element={<Library />} />
+                          <Route path="/library/explorer" element={<ChemicalExplorer />} />
                           <Route
                             path="/library/:id"
                             element={<ChemicalDetail />}
@@ -272,6 +280,9 @@ export default function App() {
                             element={<Receipt />}
                           />
                           <Route path="/about" element={<About />} />
+                          <Route path="/impact" element={<PersonalImpact />} />
+                          <Route path="/laboratory" element={<LaboratoryWorkspace />} />
+                          <Route path="/tools" element={<ScienceTools />} />
                           <Route
                             path="*"
                             element={

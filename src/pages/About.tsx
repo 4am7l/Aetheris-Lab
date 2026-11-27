@@ -1,8 +1,10 @@
 import { Icon, Notice } from "../ui";
-import { useText } from "../text";
+import { useLanguage, useText } from "../text";
 import PageHeading from "../components/PageHeading";
+import { words } from "../impact/locale";
 export default function About() {
   const t = useText();
+  const language = useLanguage();
   return (
     <div className="page about-page">
       <PageHeading
@@ -24,6 +26,14 @@ export default function About() {
           <p>{t("localNotice")}</p>
         </section>
       </div>
+      <section className="panel">
+        <h2>{words(language, "Chemical emergency information", "معلومات الطوارئ الكيميائية")}</h2>
+        <p>{words(language, "Contact local emergency services and laboratory safety personnel. Consult your institution's approved procedures and the product safety data sheet.",
+          "اتصل بخدمات الطوارئ المحلية ومسؤولي السلامة في المختبر. راجع إجراءات مؤسستك المعتمدة وصحيفة بيانات السلامة للمنتج.")}</p>
+        <a href="https://www.cdc.gov/chemical-emergencies/response/index.html" target="_blank" rel="noreferrer">
+          {words(language, "CDC chemical emergency guidance (U.S.)", "إرشادات CDC للطوارئ الكيميائية (الولايات المتحدة)")}
+        </a>
+      </section>
       <Notice>{t("privacy")}</Notice>
     </div>
   );

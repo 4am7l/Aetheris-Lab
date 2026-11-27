@@ -1,5 +1,5 @@
 import { unknown, type RequestInput } from "../../src/domain";
-import type { CalculationReference, CalculationReport } from "../../src/calculation";
+import { soluteConcentration, type CalculationReference, type CalculationReport } from "../../src/calculation";
 import { identityMatches, liters, methanol, normalizeSolution, water } from "./normalize";
 
 const model = { id: "aqueous-methanol-dilution", version: 1 } as const;
@@ -75,7 +75,7 @@ export function calculateDilution(input: DilutionInput): CalculationReport {
     return { status: "needs-information", reasons: missing };
   }
 
-  const analyticalMolPerL = stock.value * (stockVolume.value / finalVolumeL);
+  const analyticalMolPerL = soluteConcentration(stock.value, stockVolume.value, finalVolumeL);
   if (!Number.isFinite(analyticalMolPerL) || analyticalMolPerL < 2 ** -1022 || analyticalMolPerL >= stock.value) {
     return { status: "unsupported", reasons: [{ code: "numericRange" }] };
   }
