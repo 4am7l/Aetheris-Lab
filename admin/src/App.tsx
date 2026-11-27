@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CacheProvider } from "@emotion/react";
@@ -13,6 +13,9 @@ import ReviewWorkspace from "./ReviewWorkspace";
 import { AdminError, adminSession, adminSignIn, adminSignOut, sessionQueryKey } from "./api";
 import { adminText, type AdminTextKey } from "./i18n";
 import { AdminTextContext, useAdminText } from "./text";
+import { labApi, words } from "../../src/impact/client";
+
+const SustainabilityWorkspace = lazy(() => import("../../src/impact/Workspace").then((m) => ({ default: m.WorkspaceContent })));
 
 const systemColor = "(prefers-color-scheme: dark)";
 
@@ -155,6 +158,7 @@ export default function App() {
                 </Link>
                 <nav className="admin-controls" aria-label={t("dashboardNav")}>
                   {activeSession && <bdi className="admin-account">{t("adminRole")}</bdi>}
+                  {activeSession && <Button component={Link} to="/impact">{words(language, "Sustainability", "الاستدامة")}</Button>}
                   <IconButton
                     aria-label={t(mode === "dark" ? "switchToLight" : "switchToDark")}
                     onClick={() => setTheme(mode === "dark" ? "light" : "dark")}
@@ -196,6 +200,12 @@ export default function App() {
                       <Route path="/" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
                       <Route path="/requests/:id" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
                       <Route path="/reviews/:id" element={<ReviewWorkspace csrfToken={activeSession.csrfToken} />} />
+                      <Route path="/impact" element={<div className="page">
+                        <h1>{words(language, "Sustainability administration", "إدارة الاستدامة")}</h1>
+                        <Suspense fallback={<p role="status">{t("loading")}</p>}>
+                          <SustainabilityWorkspace api={labApi("/api/admin/impact", { csrf: activeSession.csrfToken })} assetBase="/api/admin/impact" isPlatform />
+                        </Suspense>
+                      </div>} />
                       <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                   </>

@@ -12,6 +12,7 @@ import { useReceipts } from "../services/useReceipts";
 import { useRetryDelay } from "../services/useRetryDelay";
 import { useText } from "../text";
 import { Icon, Modal, Notice } from "../ui";
+import { ReceiptImpact } from "../impact/Operation";
 
 export default function Receipt() {
   const { id = "" } = useParams();
@@ -138,7 +139,10 @@ export default function Receipt() {
         </>
       )}
       {saved && !tracking.isError && tracking.data?.status === "Approved" ? (
-        <ApprovedResultPanel result={tracking.data.result} />
+        <>
+          <ApprovedResultPanel result={tracking.data.result} />
+          <ReceiptImpact id={tracking.data.id} result={tracking.data.result} />
+        </>
       ) : (
         <div className="result-locked">
           <Icon name="lock" />

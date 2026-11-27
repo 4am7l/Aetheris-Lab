@@ -3,7 +3,7 @@ import Checkbox from "@mui/material/Checkbox";
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AgentReport } from "./AgentReport";
 import { ApprovedResultPanel } from "../../src/components/ApprovedResultPanel";
@@ -18,6 +18,9 @@ import { adminAction, adminDetail, AdminError, adminImage, adminList, sessionQue
 import { useAdminText as useText } from "./text";
 import { Icon, Notice } from "../../src/ui";
 import { useLanguage } from "../../src/text";
+import { labApi } from "../../src/impact/client";
+
+const ReviewImpact = lazy(() => import("../../src/impact/Operation").then((module) => ({ default: module.ReviewImpact })));
 
 function DateLabel({ value }: { value: string }) {
   return <time dateTime={value}>{new Date(value).toLocaleString(document.documentElement.lang || undefined)}</time>;
@@ -265,7 +268,13 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
               <p dir="auto">{request.review.notes}</p>
             </section>
           )}
-          {request.approvedResult && <ApprovedResultPanel result={request.approvedResult} />}
+          {request.approvedResult && <>
+            <ApprovedResultPanel result={request.approvedResult} />
+            {!archived && <Suspense fallback={<p role="status">{t("loading")}</p>}>
+              <ReviewImpact id={id} api={labApi("/api/admin/impact", { csrf: csrfToken })}
+                scopeKey="platform" result={request.approvedResult} />
+            </Suspense>}
+          </>}
           <section className="panel admin-section">
             <h2>{t("history")}</h2>
             {!request.history.length && <p>{t("noHistory")}</p>}

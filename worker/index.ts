@@ -56,11 +56,22 @@ async function health(env: Env) {
   }, ready ? 200 : 503);
 }
 
-async function withinLimit(request: Request, limiter: RateLimiter) {
+async function withinLimit(request: Request, limiter: RateLimiter, namespace = "") {
   // Cloudflare provides this header on direct ingress. Treat missing IPs as a shared bucket.
   const key = request.headers.get("CF-Connecting-IP") || "unknown-client";
-  const { success } = await limiter.limit({ key });
+  const { success } = await limiter.limit({ key: namespace + key });
   return success;
+}
+
+function impactRateScope(pathname: string) {
+  const [, , , feature, workspace] = pathname.split("/");
+  if (feature === "workspace") {
+    const separate = ["redeem", "inventory", "sds", "chemicals", "pairs", "knowledge"];
+    return separate.includes(workspace) ? "impact-workspace-" + workspace + ":" : "impact-workspace:";
+  }
+  if (["chemicals", "knowledge", "pictograms", "pairs"].includes(feature)) return "impact-reference:";
+  if (feature === "profile" || feature === "personal") return "impact-profile:";
+  return "impact-operation:";
 }
 
 async function hashToken(token: string) {
@@ -235,7 +246,9 @@ export default {
       if (origin !== null && origin !== new URL(request.url).origin) return error("FORBIDDEN", 403);
       try {
         if (!env.DB || !env.TRACKING_LIMIT) return error("SERVICE_UNAVAILABLE", 503);
-        if (!await withinLimit(request, env.TRACKING_LIMIT)) return error("RATE_LIMITED", 429, { "Retry-After": "60" });
+        if (!await withinLimit(request, env.TRACKING_LIMIT, impactRateScope(pathname))) {
+          return error("RATE_LIMITED", 429, { "Retry-After": "60" });
+        }
         return await publicImpact(request, env);
       } catch {
         return error("SERVICE_UNAVAILABLE", 503);

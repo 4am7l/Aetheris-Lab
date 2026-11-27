@@ -121,6 +121,22 @@ async function verify(receipt: CreatedReceipt, impact: OperationImpact, scenario
 }
 
 describe("sustainability reference and tenant access", () => {
+  it("shares neither reference nor workspace request budgets with public receipt tracking", async () => {
+    const keys = new Set<string>();
+    env.TRACKING_LIMIT = {
+      limit: ({ key }) => {
+        if (keys.has(key)) return Promise.resolve({ success: false });
+        keys.add(key);
+        return Promise.resolve({ success: true });
+      },
+    };
+    expect((await call(base + "/chemicals")).status).toBe(200);
+    expect((await call(base + "/chemicals")).status).toBe(429);
+    expect((await call(ws + "/overview", undefined, viewerToken)).status).toBe(200);
+    const receipt = await submit();
+    expect((await call("/api/requests/" + receipt.id, undefined, receipt.trackingToken)).status).toBe(200);
+  });
+
   it("matches all 25 supplied numerical rows with exact source page, no inferred price split, no verified rates", async () => {
     const cost = [6, 8, 10, 7, 8, 5, 6, 6, 12, 14, 15, 14, 18, 22, 25, 24, 12, 16, 7, 45, 20, 40, 10, 38, 20];
     const carbon = [.10, .15, .25, .10, .20, .08, .08, .15, .45, .55, .60, .50, .70, .75, .90, .85, .25, .35, .30, 1.50, .80, 1.80, .30, 1.70, .85];

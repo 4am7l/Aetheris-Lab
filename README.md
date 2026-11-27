@@ -71,6 +71,7 @@ npm test
 | `migrations/0005_admin_password.sql` | Password sessions and login rate limiting                        |
 | `docs/admin-review.md`            | Secure review protocol and publication requirements                |
 | `docs/cloudflare.md`              | Cloudflare setup and deployment instructions                       |
+| `docs/sustainability.md`          | Impact methods, reference provenance, workspace access and rollout  |
 
 ## Assessment and review
 

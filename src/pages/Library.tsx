@@ -26,6 +26,7 @@ export default function Library() {
         title={t("library")}
         description={t("libraryIntro")}
       />
+      <div><Button variant="contained" component={Link} to="/library/explorer">{t("chemicalExplorerNav")}</Button></div>
       <TextField
         className="library-search"
         fullWidth
