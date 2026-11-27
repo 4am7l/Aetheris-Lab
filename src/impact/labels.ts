@@ -1,5 +1,17 @@
 import { words, type LabLanguage } from "./locale";
 import { currencyPrecision } from "./model";
+import type { FixedGuideEstimate } from "./contracts";
+
+export function fixedGuideStatus(lang: LabLanguage, status: FixedGuideEstimate["status"]) {
+  const labels = {
+    applied: ["Reference applied", "طُبِّق المرجع"],
+    "needs-review": ["Formulation match requires review", "تطابق التركيبة يتطلب مراجعة"],
+    "not-applicable": ["Formulation not applicable", "التركيبة لا تنطبق"],
+    "volume-unavailable": ["Measured liquid volume unavailable", "حجم السائل المقاس غير متاح"],
+  } as const;
+  const [en, ar] = labels[status];
+  return words(lang, en, ar);
+}
 
 const terms: Record<string, [string, string]> = {
   estimated: ["Estimated", "تقديري"], "action-reported": ["Action reported", "تم الإبلاغ عن الإجراء"],

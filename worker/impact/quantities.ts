@@ -29,7 +29,7 @@ export function assessedStocks(json: string): Stocks {
   return { A: stock(input.a), B: stock(input.b) };
 }
 
-function formulaKey(value: string) {
+export function formulaKey(value: string) {
   const normalized = value.normalize("NFKC").trim();
   if (!/^(?:[A-Z][a-z]?\d*){1,40}$/.test(normalized)) return normalized;
   const counts = new Map<string, number>();

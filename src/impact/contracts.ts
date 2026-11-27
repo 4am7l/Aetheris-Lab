@@ -15,6 +15,21 @@ export interface ImpactEvent {
   reviewRequired: boolean;
 }
 
+export interface FixedGuideEstimate {
+  side: "A" | "B";
+  materialId: string; nameAr: string; nameEn: string; cas: string; concentration: string;
+  formulation: string | null; solvent: string | null;
+  sourcePrice: string; sourcePriceUnit: string; currency: "JOD";
+  sourceFactor: string; sourceFactorUnit: string; denominator: "L";
+  sourceHash: string; document: string; page: number; rowNumber: number;
+  decisionId: number; reviewedMatch: boolean | null;
+  status: "applied" | "needs-review" | "not-applicable" | "volume-unavailable";
+  assessedVolume: number | null;
+  inputEstimate: { volume: number; combinedCost: number; co2e: number } | null;
+  actionEstimate: { volume: number; combinedCost: number; co2e: number } | null;
+  canReviewMatch: boolean;
+}
+
 export interface OperationImpact {
   writable: boolean;
   assessed: { liters: number | null; kilograms: number | null; knownQuantities: number; totalQuantities: number };
@@ -27,6 +42,7 @@ export interface OperationImpact {
   current: ImpactEvent | null;
   events: ImpactEvent[];
   sourceReferences: PublicResult["sources"];
+  fixedGuide: FixedGuideEstimate[];
 }
 
 export interface Organization {

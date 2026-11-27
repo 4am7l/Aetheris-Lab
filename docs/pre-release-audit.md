@@ -32,6 +32,7 @@ The review compared the sustainability branch with the pre-sustainability applic
 - Institution-issued bearer credentials remain in local browser storage for repeat use. Revoke membership when access ends. Cloudflare’s per-location rate limit is an abuse control. Authorization checks use the verified role and scope separately.
 - Earlier impact snapshots flagged for re-review keep their original numbers for traceability. Review any stock posted from those snapshots during pilot onboarding and reconcile the physical balance with an approved event. A stock correction of the same linked action applies to its original container. Check the original physical placement and use a documented inventory adjustment for an independent container movement.
 - Rehearse the release in an isolated account configuration with `AGENT_ENABLED=false` and no Gemini key. Use representative tenant volumes and PDFs near the configured size limit. Obtain domain-owner sign-off, review the documented rate and storage headroom, and confirm rollback versions before scheduling production.
+- Migration `0011` protects the 25 original guide formulations, prices and factors and records reviewer decisions about matching the guide. Fixed figures apply on authorized approved receipts, including receipts with no affiliation. Their source strings and provenance appear in the catalog, receipt and operation PDF. Combined estimates and modeled emissions stay outside the verified ledger.
 
 ## Cloudflare Free plan
 
@@ -52,7 +53,7 @@ The review compared the sustainability branch with the pre-sustainability applic
    npx wrangler d1 time-travel info aetheris-lab-db --config wrangler.toml
    ```
 
-3. Apply pending migrations in filename order and verify that `0007`, `0008`, `0009` and `0010` show as applied. Deploy the Worker first with the existing `DB`, `IMAGES`, `SUBMISSION_LIMIT` and `TRACKING_LIMIT` bindings and preserved secrets. Check health and a historical receipt before deploying either UI.
+3. Apply pending migrations in filename order and verify `0007` through `0011` show as applied. Deploy the Worker first with the existing `DB`, `IMAGES`, `SUBMISSION_LIMIT` and `TRACKING_LIMIT` bindings and preserved secrets. Check health, a historical receipt and a guide-covered unaffiliated fixture in staging before deploying either UI.
 
    ```sh
    npx wrangler d1 migrations apply aetheris-lab-db --remote --config wrangler.toml
@@ -76,7 +77,7 @@ The review compared the sustainability branch with the pre-sustainability applic
    npx wrangler rollback "$PRE_RELEASE_WORKER_VERSION" --config wrangler.toml
    ```
 
-2. Keep the additive schema and existing R2 objects during application rollback. Migration `0010` does not rewrite or destroy earlier snapshots. Avoid serving a pre-audit sustainability writer against the upgraded tables because it still accepts the pre-audit accounting rules.
+2. Keep the additive schema and existing R2 objects during application rollback. Migrations `0010` and `0011` preserve earlier snapshots and source rates. Avoid serving a pre-audit sustainability writer against the upgraded tables because it still accepts the pre-audit accounting rules.
 3. Use D1 Time Travel only after a separate data-recovery decision. Pause writes, record a current bookmark, preserve or reconcile post-bookmark D1 changes and check R2 separately. Time Travel replaces the database in place and leaves R2 objects as they were at the time of rollback. [D1 Time Travel recovery](https://developers.cloudflare.com/d1/reference/time-travel/)
 
    ```sh

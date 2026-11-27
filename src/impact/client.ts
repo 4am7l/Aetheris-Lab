@@ -78,6 +78,8 @@ export function message(error: unknown, lang: LabLanguage) {
     REVIEW_PRESERVATION_FROM_ACTIONS: ["Record preserved quantities as verified actions.", "سجّل الكميات المحفوظة كإجراءات موثّقة."],
     VERIFIED_IDENTITY_REQUIRED: ["Create a verified formulation record first.", "أنشئ أولاً سجلاً موثقاً للتركيبة."],
     PAIR_FORMULATION_REQUIRED: ["A conditional finding requires verified formulations for both materials.", "تتطلب النتيجة المشروطة تركيبتين موثّقتين للمادتين."],
+    FIXED_GUIDE_REFERENCE: ["The original guide rate is fixed. Create a separate reference version.", "سعر الدليل الأصلي ثابت. أنشئ مرجعاً مستقلاً."],
+    GUIDE_MATCH_UNAVAILABLE: ["This assessment does not support a match to the original guide row.", "بيانات التقييم لا تدعم المطابقة مع سجل الدليل الأصلي."],
     FORMULATION_REQUIRED: ["Verification needs a CAS number, formulation, solvent and concentration or purity.", "يتطلب التحقق رقم CAS والتركيبة والمذيب والتركيز أو النقاوة."],
     AFFILIATION_UNAVAILABLE: ["This receipt is already linked or impact reporting has started.", "هذا الإيصال مرتبط أو بدأ تسجيل الأثر له."],
     LAB_MEMBERSHIP_REQUIRED: ["Use credentials issued for the laboratory.", "استخدم رمز وصول صادراً عن المختبر."],

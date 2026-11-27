@@ -10,6 +10,7 @@ import { activityKinds, activityList, carbonStages, financialKinds, quantityUnit
 import { FormError, LabInput, LabSelect, Submit } from "./Inputs";
 import { field, numeric, optional } from "./formData";
 import { ScenarioEditor } from "./ScenarioEditor";
+import { GuideReference } from "./GuideReference";
 import { readScenario } from "./scenarioForm";
 import { getCredential, keyedWrite, labApi, words, type LabApi, type PendingWrite } from "./client";
 import { labLabel, numberLabel } from "./labels";
@@ -110,6 +111,7 @@ export function OperationDetails({ data, result }: { data: OperationImpact; resu
       { title: t("Documented incompatibility findings", "نتائج عدم التوافق الموثّقة"), value: data.findings.length || (data.classification === "Incompatible" ? 1 : 0) },
       { title: t("Preventive action verified", "الإجراء الوقائي موثّق"), value: confirmed && data.current?.activities.some((x) => x.kind === "abandoned") ? t("Yes", "نعم") : empty },
     ]} />
+    <GuideReference rows={data.fixedGuide} />
     <h3>{t("Estimated impact", "الأثر التقديري")}</h3>
     {data.estimateReviewRequired && <p role="status">{recheck}</p>}
     {data.estimate && !data.estimateReviewRequired ? <CalculationView calculation={data.estimate} /> : !data.estimate && <p className="muted">{t("A reviewed baseline and intervention are required for impact estimates.", "يلزم اعتماد السيناريو المرجعي والتدخل لإصدار تقديرات الأثر.")}</p>}
@@ -245,6 +247,12 @@ export function ReviewImpact({ id, api, scopeKey, result, readOnly }: {
     onError: () => { void query.refetch(); },
     gcTime: 0,
   });
+  const guideReview = useMutation({
+    mutationFn: (payload: unknown) => api<OperationImpact>(route + "/guide-match", payload),
+    onSuccess: (updated) => client.setQueryData(key, updated),
+    onError: () => { void query.refetch(); },
+    gcTime: 0,
+  });
   const data = query.data;
   if (!data) return <section className="panel impact-panel"><h2>{t("Impact review", "مراجعة الأثر")}</h2>
     {query.isPending && <p role="status">{t("Loading…", "جارٍ التحميل…")}</p>}<FormError error={query.error} /></section>;
@@ -278,6 +286,22 @@ export function ReviewImpact({ id, api, scopeKey, result, readOnly }: {
     <h2>{readOnly ? t("Operation impact", "أثر العملية") : t("Impact review", "مراجعة الأثر")}</h2>
     <p>{t("Operation ID", "معرّف العملية")} · <bdi className="impact-wrap">{id}</bdi></p>
     <OperationDetails data={data} result={result} />
+    {!readOnly && data.writable && data.fixedGuide?.filter((row) => row.canReviewMatch).map((row) =>
+      <details className="impact-details" key={row.side + ":" + row.decisionId}>
+        <summary>{t("Review guide formulation match", "مراجعة مطابقة التركيبة للدليل")} · <bdi>{row.side}</bdi></summary>
+        <form className="impact-form" onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          guideReview.mutate({ side: row.side, expectedId: row.decisionId, applicable: field(form, "applicable") === "yes",
+            reason: field(form, "reason") });
+        }}>
+          <LabSelect name="applicable" en="Formulation matches original row" ar="التركيبة تطابق سجل الدليل الأصلي" required
+            value={row.reviewedMatch === null ? "" : row.reviewedMatch ? "yes" : "no"}
+            options={[["yes", t("Confirmed", "مؤكد")], ["no", t("Does not match", "غير مطابق")]]} />
+          <LabInput name="reason" en="Formulation evidence and reason" ar="دليل التركيبة وسبب القرار" required multiline />
+          <Submit busy={guideReview.isPending} />
+        </form>
+      </details>)}
     {!readOnly && data.writable && (!state || state === "estimated") && <details className="impact-details">
       <summary>{t("Publish a reviewed estimate", "نشر تقدير مراجع")}</summary>
       <form className="impact-form" onSubmit={(e) => submit(e, "estimate")} key={data.current?.id ?? 0}>
@@ -309,6 +333,6 @@ export function ReviewImpact({ id, api, scopeKey, result, readOnly }: {
       </form>
     </details>}
     {formatError && <p role="alert">{formatError}</p>}
-    <FormError error={save.error} />
+    <FormError error={save.error || guideReview.error} />
   </section>;
 }

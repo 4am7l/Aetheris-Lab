@@ -1,0 +1,31 @@
+import { useLanguage } from "../text";
+import type { FixedGuideEstimate } from "./contracts";
+import { numberLabel, fixedGuideStatus } from "./labels";
+import { words } from "./client";
+
+export function GuideReference({ rows }: { rows: FixedGuideEstimate[] }) {
+  const lang = useLanguage();
+  const t = (en: string, ar: string) => words(lang, en, ar);
+  if (!rows?.length) return null;
+  return <section>
+    <h3>{t("Fixed reference estimates", "تقديرات الدليل الثابت")}</h3>
+    <p className="muted">{t("The guide provides a combined cost and an emissions factor per litre. Verified savings require separate transaction evidence.",
+      "يعرض الدليل تكلفة مجمّعة ومعامل انبعاثات لكل لتر. تُعرض هذه التقديرات خارج مجاميع الوفورات الموثّقة.")}</p>
+    {rows.map((row) => <div className="impact-input-group" key={row.side}>
+      <h4><bdi>{row.side} · {lang === "ar" ? row.nameAr : row.nameEn}</bdi></h4>
+      <p><bdi>{[row.cas, row.concentration, row.formulation].filter(Boolean).join(" · ")}</bdi> · {fixedGuideStatus(lang, row.status)}</p>
+      <dl className="impact-facts">
+        <div><dt>{t("Original combined cost rate", "سعر التكلفة المجمّعة الأصلي")}</dt>
+          <dd><bdi>{row.sourcePrice} {lang === "ar" ? row.sourcePriceUnit : row.currency + "/" + row.denominator}</bdi></dd></div>
+        <div><dt>{t("Original emissions factor", "معامل الانبعاثات الأصلي")}</dt>
+          <dd><bdi>{row.sourceFactor} {lang === "ar" ? row.sourceFactorUnit : "kg CO₂e/" + row.denominator}</bdi></dd></div>
+        {([["inputEstimate", t("Estimated cost and emissions for assessed volume", "التكلفة والانبعاثات المقدّرة للحجم المقيّم")],
+          ["actionEstimate", t("Estimated impact of documented action", "الأثر المقدّر للإجراء الموثّق")]] as const).map(([field, label]) =>
+          <div key={field}><dt>{label}</dt><dd>{row[field] ? <bdi>{numberLabel(lang, row[field].volume, "L")} ·{" "}
+            {numberLabel(lang, row[field].combinedCost, row.currency)} · {numberLabel(lang, row[field].co2e, "kg CO₂e")}</bdi> :
+            numberLabel(lang, null)}</dd></div>)}
+      </dl>
+      <p className="small muted"><bdi>{row.document}</bdi> · {t("Page", "الصفحة")} {row.page} · {t("Row", "السطر")} {row.rowNumber}</p>
+    </div>)}
+  </section>;
+}

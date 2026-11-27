@@ -12,10 +12,12 @@ import { words, type LabApi } from "./client";
 export interface Prices {
   id: string; kind: string; value: number; currency: string; packageQuantity: number; unit: string;
   status: string; supplier: string | null; invoice: string | null; date: string | null; source: string | null;
+  fixedSourceValue?: string | null; fixedSourceUnit?: string | null;
 }
 export interface Factor {
   id: string; value: number; unit: string; stage: string | null; geography: string | null; boundary: string | null;
   url: string | null; methodology: string | null; uncertainty: string | null; publicationDate: string | null; status: string; source: string;
+  fixedSourceValue?: string | null; fixedSourceUnit?: string | null;
 }
 export interface ChemicalDetailData {
   chemical: CatalogChemical; prices: Prices[]; factors: Factor[];
@@ -150,7 +152,8 @@ export function RateDetails({ item }: { item: ChemicalDetailData }) {
     <details className="impact-details">
       <summary>{t("Price versions", "نسخ الأسعار")}</summary>
       {item.prices.length ? <ul>{item.prices.map((p) => <li key={p.id} className="impact-wrap">
-        {labLabel(lang, p.kind)} · <bdi>{numberLabel(lang, p.value, p.currency)} / {p.packageQuantity} {p.unit}</bdi> · {labLabel(lang, p.status)}
+        {labLabel(lang, p.kind)} · <bdi>{p.fixedSourceValue == null ? `${numberLabel(lang, p.value, p.currency)} / ${p.packageQuantity} ${p.unit}`
+          : `${p.fixedSourceValue} ${lang === "ar" ? p.fixedSourceUnit : p.currency + "/" + p.unit}`}</bdi> · {labLabel(lang, p.status)}
         {p.supplier && <> · <bdi>{p.supplier}</bdi></>}{p.date && <> · <bdi>{p.date}</bdi></>}
         {p.invoice && <> · <bdi>{p.invoice}</bdi></>}<div><bdi>{p.id}</bdi></div>
       </li>)}</ul> : <p>{t("No price evidence is recorded.", "لا توجد أدلة أسعار مسجلة.")}</p>}
@@ -158,7 +161,8 @@ export function RateDetails({ item }: { item: ChemicalDetailData }) {
     <details className="impact-details">
       <summary>{t("Carbon factor versions", "نسخ معاملات الكربون")}</summary>
       {item.factors.length ? <ul>{item.factors.map((p) => <li key={p.id} className="impact-wrap">
-        <bdi>{numberLabel(lang, p.value)} kg CO₂e/{p.unit}</bdi> · {labLabel(lang, p.status)}
+        <bdi>{p.fixedSourceValue ?? numberLabel(lang, p.value)} {lang === "ar" && p.fixedSourceUnit ? p.fixedSourceUnit : "kg CO₂e/" + p.unit}</bdi>
+        {" · "}{labLabel(lang, p.status)}
         {p.stage && <> · {labLabel(lang, p.stage)}</>}{p.geography && <> · <bdi>{p.geography}</bdi></>}
         <div><bdi>{p.id}</bdi></div>
         {p.boundary && <div>{t("Boundary", "النطاق")} · <bdi>{p.boundary}</bdi></div>}

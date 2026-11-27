@@ -7,6 +7,7 @@ import { activityList, calculateImpact, evidenceKey, eventKey, scenarioSchema,
 import { error, json } from "../http";
 import { bearer, canReview, digest, withinScope, type Scope } from "./access";
 import { calculationReferences } from "./catalog";
+import { fixedGuideEstimates, reviewGuideMatch } from "./fixedGuide";
 import { body, longText, timestamp } from "./io";
 import { activityFormulations, assessedStocks, assessedTotals, preservationTotals, validateActivities, validateScenario, type Stocks } from "./quantities";
 
@@ -85,9 +86,10 @@ async function show(db: D1Database, id: string, row: ApprovedRow) {
   const estimate = estimates.results[0] ? asEvent(estimates.results[0]).calculation : null;
   const events = history.results.map(asEvent);
   const covered = estimate ?? events[0]?.calculation;
+  const stocks = assessedStocks(row.input);
   const operation: OperationImpact = {
     writable: !row.archivedAt,
-    assessed: assessedTotals(assessedStocks(row.input)),
+    assessed: assessedTotals(stocks),
     evidence: {
       identifiedSides: evidence.results[0].identifiedSides,
       citedSources: result.sources.length,
@@ -100,6 +102,7 @@ async function show(db: D1Database, id: string, row: ApprovedRow) {
     reviewedWaste: result.wasteAssessment,
     estimate, estimateReviewRequired: Boolean(estimates.results[0] && estimates.results[0].integrityVersion !== 2),
     current: events[0] ?? null, events, sourceReferences: result.sources,
+    fixedGuide: await fixedGuideEstimates(db, id, row.runId, stocks, events[0]),
   };
   return json(operation);
 }
@@ -162,12 +165,18 @@ async function evidenceHashes(reference: string | undefined, scenario?: Scenario
   return documents.size ? Promise.all([...documents].sort().map((key) => digest("impact-proof:" + key))) : undefined;
 }
 
-export async function operationImpact(request: Request, db: D1Database, id: string, mode: "view" | "report" | "withdraw" | "estimate" | "review", scope?: Scope) {
+export async function operationImpact(request: Request, db: D1Database, id: string,
+  mode: "view" | "report" | "withdraw" | "estimate" | "review" | "guide-match", scope?: Scope) {
   if (!publicRequestIdSchema.safeParse(id).success || (!scope && !await receiptAuthorized(db, id, bearer(request)))) return error("NOT_FOUND", 404);
   const row = await approved(db, id);
   if (!row || (scope && !withinScope(scope, row.institutionId, row.labId))) return error("NOT_FOUND", 404);
   if (mode === "view") return show(db, id, row);
   if (row.archivedAt) return error("ARCHIVED", 409);
+  if (mode === "guide-match") {
+    if (!scope || !canReview(scope)) return error("FORBIDDEN", 403);
+    const failure = await reviewGuideMatch(request, db, id, row, assessedStocks(row.input), scope);
+    return failure ?? show(db, id, row);
+  }
   if ((mode === "estimate" || mode === "review") && (!scope || !canReview(scope))) return error("FORBIDDEN", 403);
   const data = mode === "report" ? await body(request, reportSchema)
     : mode === "withdraw" ? await body(request, cancelSchema)

@@ -521,6 +521,95 @@ describe("reviewed calculations and outcomes", () => {
   });
 });
 
+describe("fixed source reference rates", () => {
+  it("keeps all 25 original strings and units and accepts independent additional chemicals", async () => {
+    const rows = () => db.prepare("SELECT * FROM fixed_guide_reference ORDER BY rowNumber").all();
+    const original = rows();
+    expect(original.map(({ sourcePrice }) => sourcePrice).join(",")).toBe(
+      "6,8,10,7,8,5,6,6,12,14,15,14,18,22,25,24,12,16,7,45,20,40,10,38,20");
+    expect(original.map(({ sourceFactor }) => sourceFactor).join(",")).toBe(
+      "0.10,0.15,0.25,0.10,0.20,0.08,0.08,0.15,0.45,0.55,0.60,0.50,0.70,0.75,0.90,0.85,0.25,0.35,0.30,1.50,0.80,1.80,0.30,1.70,0.85");
+    expect(original.every(({ sourcePriceUnit, sourceFactorUnit, currency, denominator }) =>
+      sourcePriceUnit === "د/لتر" && sourceFactorUnit === "كغم/لتر" && currency === "JOD" && denominator === "L")).toBe(true);
+    expect(() => db.prepare("UPDATE chemical_references SET formula = 'H2O' WHERE id = 'reference-ethanol'").run())
+      .toThrow(/Fixed guide formulation/);
+    expect(() => db.prepare(`INSERT OR REPLACE INTO carbon_factor_versions (id, chemical_id, value, unit, source_json, status, created_at)
+      VALUES ('reference-ethanol-carbon','reference-ethanol',9,'L','{}','unverified',?)`).run(actualDate)).toThrow(/Fixed guide rate/);
+    expect((await admin("/versions/price", { chemicalId: "reference-ethanol", kind: "combined", value: 99, packageQuantity: 1,
+      unit: "L", verified: false, supersedes: "reference-ethanol-combined" })).status).toBe(409);
+    expect((await admin("/versions/carbon", { chemicalId: "reference-ethanol", value: 3, unit: "L",
+      verified: false, supersedes: "reference-ethanol-carbon" })).status).toBe(409);
+    const supplemental = await ok<{ id: string }>(await admin("/chemicals", { nameEn: "Additional public formulation",
+      nameAr: "تركيبة عامة إضافية", cas: "64-17-5", formula: "C2H6O", concentration: "40% v/v", solvent: "Water",
+      formulation: "Separate product label", verified: true, source: "https://example.test/material" }), 201);
+    expect((await call(base + "/chemicals/" + supplemental.id)).status).toBe(200);
+    const catalog = await ok<{ factors: { fixedSourceValue: string }[] }>(await call(base + "/chemicals/reference-silver-nitrate"));
+    expect(catalog.factors[0].fixedSourceValue).toBe("1.50");
+    expect(rows()).toEqual(original);
+  });
+
+  it("automatically uses the fixed silver nitrate rates on an unaffiliated approved receipt", async () => {
+    const receipt = await submit("Silver nitrate", { cas: "7761-88-8", formula: "AgNO3", concentration: "0.1",
+      unit: "mol/L", solvent: "Water", state: "Liquid", quantity: "100", quantityUnit: "mL" });
+    expect((await call(operation(receipt), undefined, receipt.trackingToken)).status).toBe(404);
+    approve(receipt.id);
+    expect((await call(operation(receipt))).status).toBe(404);
+    const approved = await ok<OperationImpact>(await call(operation(receipt), undefined, receipt.trackingToken));
+    expect(approved.fixedGuide).toMatchObject([{ side: "A", status: "applied", sourcePrice: "45", sourceFactor: "1.50",
+      inputEstimate: { volume: 0.1, combinedCost: 4.5, co2e: 0.15 }, actionEstimate: null }]);
+    const pending = await ok<OperationImpact>(await report(receipt, { ...changes(), activities: [{ ...action("segregation", 100), side: "A" }] }));
+    expect(pending.fixedGuide[0].actionEstimate).toBeNull();
+    const reviewed = await ok<OperationImpact>(await admin("/operations/" + receipt.id + "/review",
+      { ...changes(pending.current?.id), decision: "verify", reason: "Reviewed segregation record", evidenceReference: "guide/synthetic-20" }));
+    expect(reviewed.fixedGuide[0].actionEstimate).toEqual({ volume: 0.1, combinedCost: 4.5, co2e: 0.15 });
+    expect(reviewed.current?.calculation).toBeNull();
+    const overview = await ok<ImpactOverview>(await admin("/overview"));
+    expect(overview.totals).toMatchObject({ verifiedFinancial: { value: null }, verifiedCarbon: { value: null } });
+  });
+
+  it("requires an authorized match for an unspecified percentage basis and retains its original precision", async () => {
+    const receipt = await submit("Chloroform", { cas: "67-66-3", formula: "CHCl3", concentration: "99.8", unit: "% w/w",
+      solvent: "Neat", state: "Liquid", quantity: "250", quantityUnit: "mL" });
+    approve(receipt.id);
+    const read = () => call(operation(receipt), undefined, receipt.trackingToken).then((r) => ok<OperationImpact>(r));
+    expect((await read()).fixedGuide[0]).toMatchObject({ status: "needs-review", sourcePrice: "25", sourceFactor: "0.90", inputEstimate: null });
+    const path = "/operations/" + receipt.id + "/guide-match";
+    const data = { side: "A", expectedId: 0, applicable: true, reason: "Reviewed labelled synthetic formulation and guide row" };
+    expect((await call(ws + path, data, reviewerToken)).status).toBe(404);
+    expect((await call(base + path, data, receipt.trackingToken)).status).toBe(404);
+    const [first, second] = await Promise.all([admin(path, data), admin(path, data)]);
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    const updated = await read();
+    expect(updated.fixedGuide[0]).toMatchObject({ status: "applied", inputEstimate: { volume: 0.25, combinedCost: 6.25, co2e: 0.225 } });
+    const pending = await ok<OperationImpact>(await report(receipt, { ...changes(),
+      activities: [{ ...action("preserved", 200), side: "A" }, { ...action("segregation", 250), side: "A" }] }));
+    const verified = await ok<OperationImpact>(await admin("/operations/" + receipt.id + "/review", { ...changes(pending.current?.id),
+      decision: "verify", reason: "Reviewed documented materials", evidenceReference: "guide/synthetic-15" }));
+    expect(verified.fixedGuide[0].actionEstimate).toEqual({ volume: 0.25, combinedCost: 6.25, co2e: 0.225 });
+    await ok(await admin(path, { ...data, expectedId: updated.fixedGuide[0].decisionId, applicable: false }));
+    expect((await read()).fixedGuide[0]).toMatchObject({ status: "not-applicable", inputEstimate: null, actionEstimate: null });
+    await ok(await call("/api/admin/requests/manage", { action: "delete", ids: [receipt.id] }, undefined, true));
+    expect(db.prepare("SELECT count(*) AS n FROM assessment_guide_reviews").get()?.n).toBe(0);
+  });
+
+  it("leaves wrong formulation and unmeasured volume unavailable", async () => {
+    for (const [patch, status] of [
+      [{ formula: "AgNO3", concentration: "0.2", quantity: "100", quantityUnit: "mL" }, "not-applicable"],
+      [{ formula: "AgNO3", concentration: "0.1", quantity: "100", quantityUnit: "g" }, "volume-unavailable"],
+      [{ formula: "AgNO3", concentration: "0.1", quantity: "Unknown", quantityUnit: "Unknown" }, "volume-unavailable"],
+      [{ formula: "H2O", concentration: "0.1", quantity: "100", quantityUnit: "mL" }, "not-applicable"],
+    ]) {
+      const receipt = await submit("Silver nitrate", { cas: "7761-88-8", unit: "mol/L", solvent: "Water", state: "Liquid", ...(patch as object) });
+      approve(receipt.id);
+      const outcome = await ok<OperationImpact>(await call(operation(receipt), undefined, receipt.trackingToken));
+      expect(outcome.fixedGuide[0]).toMatchObject({ status, inputEstimate: null, actionEstimate: null });
+      expect((await admin("/operations/" + receipt.id + "/guide-match", {
+        side: "A", expectedId: 0, applicable: true, reason: "Attempted override of missing or contradictory evidence",
+      })).status).toBe(422);
+    }
+  });
+});
+
 describe("scoped laboratory tools", () => {
   it("protects inventory, applies one verified stock return and preserves the movements", async () => {
     const { id: materialId } = await ok<{ id: string }>(await call(ws + "/chemicals", { nameEn: "Sodium chloride solution",

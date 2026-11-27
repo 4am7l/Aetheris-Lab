@@ -59,7 +59,8 @@ async function fixture() {
   }
   const water = { name: "Water", formula: "H2O", cas: "7732-18-5", concentration: "Unknown", unit: "Unknown",
     solvent: "Water", state: "Liquid", temperature: "25", quantity: "100", quantityUnit: "mL", notes: "", source: "Manual entry" };
-  const receipt = await post("/api/requests", { a: water, b: { ...water, quantity: "200" }, conditions: "" });
+  const silverNitrate = { ...water, name: "Silver nitrate", formula: "AgNO3", cas: "7761-88-8", concentration: "0.1", unit: "mol/L" };
+  const receipt = await post("/api/requests", { a: silverNitrate, b: { ...water, quantity: "200" }, conditions: "" });
   await post("/api/impact/workspace/affiliate", { id: receipt.id, receipt: receipt.trackingToken }, manager);
   const run = randomUUID();
   db.prepare("INSERT INTO public_agent_runs(id,request_id,status,started_at,lease_until) VALUES(?,?,'running',?,?)").run(run,receipt.id,now,now);
@@ -136,8 +137,12 @@ async function main() {
 
     await page.goto(ui + "/requests/" + receipt.id + "/receipt");
     await page.getByRole("heading",{ name:"Estimated impact", exact:true }).waitFor();
+    await page.getByRole("heading", { name: "Fixed reference estimates", exact: true }).waitFor();
+    await page.getByText("1.50 kg CO₂e/L", { exact: true }).waitFor();
+    await page.getByText(/0\.1 L · 4\.500 JOD · 0\.15 kg CO₂e/).waitFor();
     await page.getByText("العربية", { exact:true }).click();
     await page.getByRole("heading",{ name:"الأثر التقديري", exact:true }).waitFor();
+    await page.getByRole("heading", { name: "تقديرات الدليل الثابت", exact: true }).waitFor();
     assert.equal(await page.locator("html").getAttribute("dir"), "rtl");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Arabic receipt overflow");
     const ar = page.waitForEvent("download");
@@ -161,10 +166,11 @@ async function main() {
     const operation = "/api/impact/operations/" + receipt.id;
     const pending = await responseJson(operation, { headers: { Authorization: "Bearer " + receipt.trackingToken } });
     assert.equal(pending.current.state, "pending-verification");
-    await post("/api/impact/workspace/operations/" + receipt.id + "/review", {
+    const verified = await post("/api/impact/workspace/operations/" + receipt.id + "/review", {
       key: randomUUID(), expectedId: pending.current.id, decision: "verify",
       reason: "Local reviewer checked the original fixture", evidenceReference: "local/audit/" + receipt.id,
     }, reviewer);
+    assert.deepEqual(verified.fixedGuide[0].actionEstimate, { volume: 0.1, combinedCost: 4.5, co2e: 0.15 });
 
     await page.goto(ui + "/laboratory");
     await page.getByRole("heading",{ name:"Sustainability and impact", exact:true }).waitFor();

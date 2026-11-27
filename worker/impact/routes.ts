@@ -101,9 +101,9 @@ export async function managedImpact(request: Request, env: Env, route: string, s
   if (stock) return inventory(request, DB, scope, stock[1], stock[2]);
   const document = /^\/sds(?:\/([A-Za-z0-9-]+)(?:\/(file|review))?)?$/.exec(route);
   if (document) return sds(request, env, scope, document[1], document[2]);
-  const operation = /^\/operations\/([^/]+)(?:\/(estimate|review))?$/.exec(route);
+  const operation = /^\/operations\/([^/]+)(?:\/(estimate|review|guide-match))?$/.exec(route);
   if (operation) {
-    const mode = operation[2] as "estimate" | "review" | undefined;
+    const mode = operation[2] as "estimate" | "review" | "guide-match" | undefined;
     return request.method === (mode ? "POST" : "GET") ? operationImpact(request, DB, operation[1], mode ?? "view", scope) :
       error("METHOD_NOT_ALLOWED", 405);
   }

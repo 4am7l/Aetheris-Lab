@@ -1,7 +1,7 @@
 import { jsPDF } from "jspdf";
 import type { ImpactBucket, ImpactOverview, OperationImpact } from "./contracts";
 import { download, words, type LabLanguage } from "./client";
-import { labLabel, numberLabel } from "./labels";
+import { fixedGuideStatus, labLabel, numberLabel } from "./labels";
 import { carbonStages, financialKinds, type ImpactCalculation } from "./model";
 
 type Row = { text: string; heading?: boolean; link?: string; bar?: number };
@@ -126,10 +126,26 @@ export function operationPdf(id: string, data: OperationImpact, lang: LabLanguag
   const verified = data.current && !data.current.reviewRequired && ["verified", "corrected"].includes(data.current.state);
   const recheck = t("Historical calculation requires re-review", "الحساب السابق يتطلب مراجعة جديدة");
   const amount = (value: number | null, unit: string) => value === null ? numberLabel(lang, null) : ltr(lang, numberLabel(lang, value, unit));
+  const guide = data.fixedGuide ?? [];
+  const guideRows: Row[] = guide.length ? [
+    { text: t("Fixed reference estimates", "تقديرات الدليل الثابت"), heading: true },
+    ...guide.flatMap((row) => [
+      { text: ltr(lang, row.side) + " · " + (lang === "ar" ? row.nameAr : row.nameEn) + " · " + fixedGuideStatus(lang, row.status) },
+      { text: t("Original cost rate", "التكلفة الأصلية") + " · " + ltr(lang, row.sourcePrice + " " + (lang === "ar" ? row.sourcePriceUnit : "JOD/L"))
+        + " · " + t("Original factor", "المعامل الأصلي") + " · " + ltr(lang, row.sourceFactor + " " + (lang === "ar" ? row.sourceFactorUnit : "kg CO₂e/L")) },
+      ...([["inputEstimate", t("Assessed volume estimate", "تقدير الحجم المقيّم")],
+        ["actionEstimate", t("Estimate for documented action", "تقدير الإجراء الموثّق")]] as const)
+        .flatMap(([key, label]) => { const estimate = row[key]; return estimate ? [{ text: label + " · " + amount(estimate.volume, "L")
+          + " · " + amount(estimate.combinedCost, row.currency) + " · " + amount(estimate.co2e, "kg CO₂e") }] : []; }),
+      { text: row.document + " · " + t("Page", "الصفحة") + " " + row.page + " · " + t("Row", "السطر") + " " + row.rowNumber },
+    ]),
+    { text: t("Fixed estimates stay outside verified savings totals.", "تبقى تقديرات الدليل خارج مجاميع الوفورات الموثّقة.") },
+  ] : [];
   const rows: Row[] = [
     { text: t("Operation", "العملية") + "  ·  " + ltr(lang, id) },
     { text: t("Input volume assessed", "حجم المدخلات المقيّمة") + "  ·  " + amount(data.assessed.liters, "L") },
     { text: t("Input mass assessed", "كتلة المدخلات المقيّمة") + "  ·  " + amount(data.assessed.kilograms, "kg") },
+    ...guideRows,
     { text: t("Expected impact", "الأثر المتوقع"), heading: true },
     ...(data.estimateReviewRequired ? [{ text: recheck }] : calculationRows(data.estimate, lang)),
     { text: t("Action and verification", "الإجراء والتحقق"), heading: true },

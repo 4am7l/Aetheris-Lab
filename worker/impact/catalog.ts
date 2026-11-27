@@ -76,17 +76,21 @@ export async function catalogDetail(db: D1Database, id: string, scope?: Scope) {
   const args = scope?.global ? [id] : [id, scope?.institutionId ?? null];
   const invoice = scope?.global ? "v.invoice_reference" : history ? "CASE WHEN v.institution_id IS NOT NULL THEN v.invoice_reference END" : "NULL";
   const [prices, factors, densities] = await db.batch([
-    db.prepare(`SELECT v.id, kind, value, currency, package_quantity AS packageQuantity, unit, status,
+    db.prepare(`SELECT v.id, kind, value, v.currency, package_quantity AS packageQuantity, v.unit, status,
         supplier, effective_date AS date, created_at AS createdAt, v.supersedes,
-        ${invoice} AS invoice, ${history || !scope ? "source_json" : "NULL"} AS source
+        ${invoice} AS invoice, ${history || !scope ? "source_json" : "NULL"} AS source,
+        (SELECT sourcePrice FROM fixed_guide_reference WHERE priceId = v.id) AS fixedSourceValue,
+        (SELECT sourcePriceUnit FROM fixed_guide_reference WHERE priceId = v.id) AS fixedSourceUnit
       FROM chemical_price_versions v WHERE chemical_id = ? AND ${restrict}
-      ${history ? "" : "AND NOT EXISTS (SELECT 1 FROM chemical_price_versions n WHERE n.supersedes = v.id)"}
-      ORDER BY created_at DESC, id LIMIT 100`).bind(...args),
+      ${history ? "" : "AND (EXISTS (SELECT 1 FROM fixed_guide_reference WHERE priceId = v.id) OR NOT EXISTS (SELECT 1 FROM chemical_price_versions n WHERE n.supersedes = v.id))"}
+      ORDER BY fixedSourceValue IS NOT NULL DESC, created_at DESC, id LIMIT 100`).bind(...args),
     db.prepare(`SELECT v.id, value, unit, stage, geography, boundary, source_url AS url, publication_date AS publicationDate,
-        methodology, uncertainty, status, source_json AS source, created_at AS createdAt, v.supersedes
+        methodology, uncertainty, status, source_json AS source, created_at AS createdAt, v.supersedes,
+        (SELECT sourceFactor FROM fixed_guide_reference WHERE factorId = v.id) AS fixedSourceValue,
+        (SELECT sourceFactorUnit FROM fixed_guide_reference WHERE factorId = v.id) AS fixedSourceUnit
       FROM carbon_factor_versions v WHERE chemical_id = ? AND ${restrict}
-      ${history ? "" : "AND NOT EXISTS (SELECT 1 FROM carbon_factor_versions n WHERE n.supersedes = v.id)"}
-      ORDER BY created_at DESC, id LIMIT 100`).bind(...args),
+      ${history ? "" : "AND (EXISTS (SELECT 1 FROM fixed_guide_reference WHERE factorId = v.id) OR NOT EXISTS (SELECT 1 FROM carbon_factor_versions n WHERE n.supersedes = v.id))"}
+      ORDER BY fixedSourceValue IS NOT NULL DESC, created_at DESC, id LIMIT 100`).bind(...args),
     db.prepare(`SELECT v.id, kg_per_liter AS kgPerLiter, conditions, source_url AS url, v.supersedes,
         measurement_temperature_c AS temperatureC, measurement_state AS state
       FROM chemical_density_versions v WHERE chemical_id = ? AND ${restrict}
@@ -140,6 +144,11 @@ export async function addVersion(request: Request, db: D1Database, scope: Scope,
   if (institutionId && !await db.prepare("SELECT id FROM institutions WHERE id = ?").bind(institutionId).first()) return error("NOT_FOUND", 404);
   const table = versionTables[type];
   if (input.supersedes) {
+    if (type !== "density") {
+      const column = type === "price" ? "priceId" : "factorId";
+      if (await db.prepare(`SELECT id FROM fixed_guide_reference WHERE id = ? AND ${column} = ?`)
+        .bind(input.chemicalId, input.supersedes).first()) return error("FIXED_GUIDE_REFERENCE", 409);
+    }
     const parent = await db.prepare(`SELECT id ${"kind" in input ? ", kind, currency, supplier" : "unit" in input ? ", stage, geography, boundary" : ""}
       FROM ${table} WHERE id = ? AND chemical_id = ? AND institution_id IS ?`)
       .bind(input.supersedes, input.chemicalId, institutionId).first<Record<string, unknown>>();
