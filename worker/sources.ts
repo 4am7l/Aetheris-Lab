@@ -1,10 +1,142 @@
 import { z } from "zod";
 import { unknown, validCas, type Solution } from "../src/domain";
 import type { Evidence, EvidenceGap, Identity, SolutionSide } from "../src/review";
-import { readBytes } from "./http";
+import { error, json, readBytes } from "./http";
+import type { CompoundDetail, CompoundReference, MolecularModel } from "../src/impact/science";
 
 const pubchem = "https://pubchem.ncbi.nlm.nih.gov";
 const cdc = "https://www.cdc.gov/niosh/npg/";
+
+/** Interactive reference lookups reuse the assessment's bounded PubChem client. */
+export async function chemicalSearch(url: URL) {
+  const q = (url.searchParams.get("q") ?? "").normalize("NFKC").trim();
+  if (!q || q.length > 120) return error("INVALID_SEARCH", 400);
+  try {
+    const rows = /^\d{1,10}$/.test(q) ? [await compoundByCid(Number(q))].filter((item) => item !== null)
+      : await compounds(molecularFormula(q) ? "fastformula" : "name", q);
+    return json({ compounds: rows.map(referenceFrom), ambiguous: rows.length > 1 });
+  } catch {
+    return error("REFERENCE_UNAVAILABLE", 503);
+  }
+}
+
+async function compoundByCid(cid: number) {
+  const text = await retrieve(pubchem + "/rest/pug/compound/cid/" + cid +
+    "/property/Title,MolecularFormula,MolecularWeight,ConnectivitySMILES,Charge/JSON", 64 * 1024);
+  if (!text) return null;
+  const properties = z.object({ PropertyTable: z.object({ Properties: z.array(compoundSchema.extend({ Charge: z.int().optional() })) }) })
+    .parse(JSON.parse(text)).PropertyTable.Properties;
+  return properties.length === 1 && properties[0].CID === cid ? properties[0] : null;
+}
+
+function referenceFrom(record: Compound): CompoundReference {
+  return { cid: record.CID, name: record.Title, formula: record.MolecularFormula,
+    mass: record.MolecularWeight ? Number(record.MolecularWeight) : null, url: pubchem + "/compound/" + record.CID };
+}
+
+function discrete(record: NonNullable<Awaited<ReturnType<typeof compoundByCid>>>) {
+  const smiles = record.ConnectivitySMILES;
+  // Multicomponent, charged, wildcard/polymer, or undefined representations do not pass.
+  return Boolean(smiles && /^[^.*]+$/.test(smiles) && record.Charge === 0 &&
+    !/\[[^\]]*[+-][^\]]*\]/.test(smiles));
+}
+
+const propertyHeadings = new Set(["Physical Description", "Solubility", "Boiling Point", "Melting Point", "Density", "Chemical Classes"]);
+function physicalProperties(raw: unknown, url: string): CompoundDetail["properties"] {
+  const rows: CompoundDetail["properties"] = [];
+  function collect(node: unknown, depth: number) {
+    const parsed = annotations.safeParse(node);
+    if (!parsed.success || depth > 8 || rows.length >= 12) return;
+    const { TOCHeading: label, Information, Section } = parsed.data;
+    if (propertyHeadings.has(label)) for (const item of Information ?? []) {
+      const value = item.Value?.StringWithMarkup?.[0]?.String.trim().slice(0, 350);
+      if (!value || rows.filter((row) => row.label === label).length >= 2 || rows.some((row) => row.value === value)) continue;
+      rows.push({ label, value, url: url + "#" + encodeURIComponent(label) });
+    }
+    for (const section of Section ?? []) collect(section, depth + 1);
+  }
+  if (Array.isArray(raw)) for (const s of raw) collect(s, 0);
+  return rows;
+}
+
+async function heading(cid: number, label: string) {
+  const raw = await retrieve(pubchem + "/rest/pug_view/data/compound/" + cid + "/JSON?heading=" + encodeURIComponent(label), 1024 * 1024);
+  return raw ? { raw, section: z.object({ Record: z.object({ RecordNumber: z.literal(cid), Section: z.array(z.unknown()) }) })
+    .parse(JSON.parse(raw)).Record.Section } : null;
+}
+
+const ghsNames = ["Explosive", "Flammable", "Oxidizer", "Gas under pressure", "Corrosive", "Acute toxicity", "Irritant", "Health hazard", "Environmental hazard"];
+export async function chemicalKnowledge(cid: number) {
+  try {
+    const record = await compoundByCid(cid);
+    if (!record) return error("NOT_FOUND", 404);
+    const ref = referenceFrom(record);
+    const gaps: string[] = [];
+    const [cas, hazards, physical, ghs] = await Promise.all([
+      compoundCas(cid).catch(() => { gaps.push("cas"); return null; }),
+      pubchemSafety(record).catch(() => { gaps.push("hazards"); return []; }),
+      heading(cid, "Chemical and Physical Properties").catch(() => { gaps.push("physical"); return null; }),
+      heading(cid, "GHS Classification").catch(() => { gaps.push("ghs"); return null; }),
+    ]);
+    const codes = ghs ? [...new Set(ghs.raw.match(/GHS0[1-9](?=\.svg")/g) ?? [])] : [];
+    const detail: CompoundDetail = { ...ref, cas: typeof cas === "string" ? cas : null,
+      hazards: hazards.map((item) => item.kind === "incompatibility" ? { ...item, excerpt: "" } : item),
+      properties: physicalProperties(physical?.section, ref.url),
+      pictograms: codes.map((code) => ({ code, name: ghsNames[Number(code.at(-1)) - 1] })),
+      sourceGaps: gaps.sort(), discreteModel: discrete(record) };
+    return json(detail);
+  } catch {
+    return error("REFERENCE_UNAVAILABLE", 503);
+  }
+}
+
+export function parsePubChemSdf(data: string, dimensions: MolecularModel["dimensions"], source: string): MolecularModel | null {
+  const lines = data.replaceAll("\r", "").split("\n");
+  const counts = lines[3];
+  if (!counts?.includes("V2000") || !lines.includes("M  END")) return null;
+  const atomCount = Number(counts.slice(0, 3));
+  const bondCount = Number(counts.slice(3, 6));
+  if (!Number.isInteger(atomCount) || atomCount < 1 || atomCount > 200 || !Number.isInteger(bondCount) || bondCount < 0 || bondCount > 400) return null;
+  const atoms = lines.slice(4, 4 + atomCount).map((row) => ({
+    element: row.slice(31, 34).trim(), x: Number(row.slice(0, 10)), y: Number(row.slice(10, 20)), z: Number(row.slice(20, 30)),
+  }));
+  const bonds = lines.slice(4 + atomCount, 4 + atomCount + bondCount).map((row) => ({
+    from: Number(row.slice(0, 3)) - 1, to: Number(row.slice(3, 6)) - 1, order: Number(row.slice(6, 9)),
+  }));
+  if (atoms.length !== atomCount || bonds.length !== bondCount ||
+      atoms.some(({ element, x, y, z }) => !/^[A-Z][a-z]?$/.test(element) || ![x, y, z].every(Number.isFinite)) ||
+      bonds.some(({ from, to, order }) => !Number.isInteger(from) || !Number.isInteger(to) ||
+        from < 0 || to < 0 || from >= atoms.length || to >= atoms.length || ![1, 2, 3, 4].includes(order))) return null;
+  return { atoms, bonds, dimensions, source };
+}
+
+export async function chemicalModel(cid: number, dimensions: MolecularModel["dimensions"]) {
+  try {
+    const record = await compoundByCid(cid);
+    if (!record || !discrete(record)) return error("DISCRETE_MODEL_UNAVAILABLE", 404);
+    const source = pubchem + "/rest/pug/compound/cid/" + cid + "/SDF?record_type=" + dimensions;
+    const sdf = await retrieve(source, 256 * 1024);
+    const model = sdf && parsePubChemSdf(sdf, dimensions, source);
+    return model ? json(model) : error("DISCRETE_MODEL_UNAVAILABLE", 404);
+  } catch {
+    return error("REFERENCE_UNAVAILABLE", 503);
+  }
+}
+
+export async function pictogram(code: string) {
+  if (!/^GHS0[1-9]$/.test(code)) return error("NOT_FOUND", 404);
+  try {
+    const svg = await retrieve(pubchem + "/images/ghs/" + code + ".svg", 24 * 1024);
+    if (!svg || !svg.includes("<svg")) return error("NOT_FOUND", 404);
+    return new Response(svg, { headers: {
+      "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400",
+      "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      "X-Content-Type-Options": "nosniff",
+    } });
+  } catch {
+    return error("REFERENCE_UNAVAILABLE", 503);
+  }
+}
 const compoundSchema = z.object({
   CID: z.int().positive(),
   Title: z.string().min(1).max(500),

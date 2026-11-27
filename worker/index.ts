@@ -12,6 +12,8 @@ import {
 } from "./auth";
 import { error, hex, json } from "./http";
 import { deleteQueuedImages, readSubmission, storeImages } from "./images";
+import { platform } from "./impact/access";
+import { managedImpact, publicImpact } from "./impact/routes";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -148,6 +150,9 @@ async function reviewApi(request: Request, env: Env, pathname: string) {
   if (request.method !== "GET" && !hasCsrfToken(request, reviewer.csrfToken)) return error("FORBIDDEN", 403);
   if (pathname === "/api/admin/session" && request.method === "GET") return json(sessionInfo(reviewer.csrfToken));
   if (pathname === "/api/admin/auth/logout" && request.method === "POST") return logout(env.DB, reviewer.tokenHash);
+  if (pathname.startsWith("/api/admin/impact/")) {
+    return managedImpact(request, env, pathname.slice("/api/admin/impact".length), platform(reviewerId));
+  }
   return admin(request, env, reviewerId);
 }
 
@@ -224,6 +229,17 @@ export default {
     const isHealth = pathname === "/api/health";
     if (isHealth || pathname === publicRequestPath || trackingId !== undefined) {
       return publicApi(request, env, trackingId, isHealth);
+    }
+    if (pathname.startsWith("/api/impact/")) {
+      const origin = request.headers.get("Origin");
+      if (origin !== null && origin !== new URL(request.url).origin) return error("FORBIDDEN", 403);
+      try {
+        if (!env.DB || !env.TRACKING_LIMIT) return error("SERVICE_UNAVAILABLE", 503);
+        if (!await withinLimit(request, env.TRACKING_LIMIT)) return error("RATE_LIMITED", 429, { "Retry-After": "60" });
+        return await publicImpact(request, env);
+      } catch {
+        return error("SERVICE_UNAVAILABLE", 503);
+      }
     }
     if (pathname.startsWith("/api/")) return json(unavailable, 503);
     return error("NOT_FOUND", 404);
