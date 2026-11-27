@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -40,10 +41,14 @@ function preference(key: string, fallback: string) {
     return fallback;
   }
 }
-function subscribeMobile(callback: () => void) {
+function subscribeMobile(callback: () => void, onDesktop: () => void) {
   const media = matchMedia("(max-width: 640px)");
-  media.addEventListener("change", callback);
-  return () => media.removeEventListener("change", callback);
+  const handleChange = (event: MediaQueryListEvent) => {
+    if (!event.matches) onDesktop();
+    callback();
+  };
+  media.addEventListener("change", handleChange);
+  return () => media.removeEventListener("change", handleChange);
 }
 function isMobile() {
   return matchMedia("(max-width: 640px)").matches;
@@ -58,9 +63,12 @@ function isSystemDark() {
 }
 export default function App() {
   const [lang, setLang] = useState<"en" | "ar">(() => preference("aetheris.lang", "en") === "ar" ? "ar" : "en");
-  const [theme, setTheme] = useState(() =>
-    preference("aetheris.theme", "system"),
-  );
+  const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
+    const saved = preference("aetheris.theme", "system");
+    return saved === "system" || saved === "light" || saved === "dark"
+      ? saved
+      : "system";
+  });
   const systemDark = useSyncExternalStore(subscribeColorScheme, isSystemDark);
   const mode =
     theme === "system"
@@ -75,12 +83,23 @@ export default function App() {
     [mode, lang],
   );
   const [menu, setMenu] = useState(false);
-  const mobile = useSyncExternalStore(subscribeMobile, isMobile);
+  const subscribeViewport = useCallback(
+    (callback: () => void) => subscribeMobile(callback, () => setMenu(false)),
+    [],
+  );
+  const mobile = useSyncExternalStore(subscribeViewport, isMobile);
+  const menuOpen = mobile && menu;
   const sidebar = useRef<HTMLElement>(null);
+  const mobileToggle = useRef<HTMLButtonElement>(null);
+  const wasMenuOpen = useRef(false);
   useEffect(() => {
-    if (menu && mobile)
+    if (menuOpen) {
       sidebar.current?.querySelector<HTMLAnchorElement>("nav a")?.focus();
-  }, [menu, mobile]);
+    } else if (wasMenuOpen.current && mobile) {
+      mobileToggle.current?.focus();
+    }
+    wasMenuOpen.current = menuOpen;
+  }, [menuOpen, mobile]);
   const location = useLocation();
   const t = (key: TextKey) => (lang === "ar" ? (ar[key] ?? en[key]) : en[key]);
   useEffect(() => {
@@ -110,14 +129,15 @@ export default function App() {
           <MotionConfig reducedMotion="user">
             <div className="app-shell">
               <aside
+                id="main-sidebar"
                 ref={sidebar}
-                className={`sidebar ${menu ? "open" : ""}`}
-                inert={mobile && !menu}
+                className={`sidebar ${menuOpen ? "open" : ""}`}
+                inert={mobile && !menuOpen}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setMenu(false);
                 }}
               >
-                <Link to="/" className="brand">
+                <Link to="/" className="brand" onClick={() => setMenu(false)}>
                   <span className="brand-symbol">
                     <Icon name="science" />
                   </span>
@@ -150,19 +170,27 @@ export default function App() {
                   </div>
                 </div>
               </aside>
-              {menu && (
+              {menuOpen && (
                 <button
+                  type="button"
                   className="mobile-scrim"
                   aria-label={t("close")}
                   onClick={() => setMenu(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setMenu(false);
+                  }}
                 />
               )}
-              <div className="main-shell" inert={mobile && menu}>
+              <div className="main-shell" inert={menuOpen}>
                 <header className="topbar">
                   <div className="breadcrumb">
                     <button
+                      type="button"
+                      ref={mobileToggle}
                       className="icon-button mobile-toggle"
                       aria-label={t("mobileMenu")}
+                      aria-expanded={menuOpen}
+                      aria-controls="main-sidebar"
                       onClick={() => setMenu((v) => !v)}
                     >
                       <Icon name="menu" />
@@ -213,9 +241,9 @@ export default function App() {
                     <motion.div
                       key={location.pathname}
                       initial={{ opacity: 0 }}
-                      animate={{ opacity: 1, y: 0 }}
+                      animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      transition={{ duration: 0.12 }}
+                      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                     >
                       <Suspense
                         fallback={

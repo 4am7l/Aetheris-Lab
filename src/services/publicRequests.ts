@@ -64,7 +64,10 @@ async function request(
     );
   }
   if (response.status === expectedStatus) return response;
-  if (!posting && response.status === 404) throw new RequestError("missing");
+  if (!posting && (response.status === 404 ||
+    (path.startsWith(`${publicRequestPath}/`) && [401, 403].includes(response.status)))) {
+    throw new RequestError("missing");
+  }
   if (posting && [400, 413, 415].includes(response.status)) {
     throw new RequestError("validation");
   }

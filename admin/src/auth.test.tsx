@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import App from "./App";
+import { adminText } from "./i18n";
 
 declare const jsdom: { window: { localStorage: Storage; FormData: typeof FormData } };
 
@@ -95,4 +96,25 @@ it("identifies a static Pages deployment that responds to the session check with
   expect((await screen.findByRole("alert")).textContent).toContain("Reviewer sign-in is unavailable on this deployment.");
   expect(screen.queryByLabelText(/Password/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+});
+
+it("matches public theme preferences and keeps manual mode and Arabic RTL in the admin shell", async () => {
+  localStorage.setItem("aetheris.theme", "unexpected");
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(prefers-color-scheme: dark)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  fetchMock.mockResolvedValueOnce(Response.json({ error: "UNAUTHORIZED" }, { status: 401 }));
+  await openLogin();
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  expect(localStorage.getItem("aetheris.theme")).toBe("system");
+  fireEvent.click(screen.getByRole("button", { name: adminText("switchToLight", "en") }));
+  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(localStorage.getItem("aetheris.theme")).toBe("light");
+  fireEvent.click(screen.getByRole("button", { name: adminText("language", "en") }));
+  expect(document.documentElement.dir).toBe("rtl");
+  expect(localStorage.getItem("aetheris.lang")).toBe("ar");
+  expect(screen.getByRole("heading", { name: adminText("signInTitle", "ar") })).toBeTruthy();
+  expect(document.documentElement.dataset.theme).toBe("light");
 });

@@ -17,6 +17,7 @@ import { ar, en } from "./i18n";
 import Analysis from "./pages/Analysis";
 import Receipt from "./pages/Receipt";
 import Requests from "./pages/Requests";
+import { getServiceStatus } from "./services/publicRequests";
 import { saveReceipt } from "./services/receipts";
 import { LanguageContext, TextContext } from "./text";
 
@@ -413,17 +414,48 @@ describe("receipt tracking", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("handles an invalid bearer token using the same message as a missing receipt", async () => {
+  it.each([401, 403, 404])("shows the same unavailable receipt message for HTTP %i", async (status) => {
     saveReceipt({ ...receipt, trackingToken: token });
     fetchMock.mockResolvedValueOnce(
-      Response.json({ error: "NOT_FOUND" }, { status: 404 }),
+      Response.json({ error: token }, { status }),
     );
     mount(receiptPath);
     expect((await screen.findByRole("alert")).textContent).toContain(
       en.receiptMissing,
     );
     expect(screen.queryByText(en.submitted)).toBeNull();
+    expect(screen.queryByText(id)).toBeNull();
+    expect(document.body.textContent).not.toContain(token);
+    expect(localStorage.getItem(storageKey)).not.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the Arabic unavailable receipt message when access is denied", async () => {
+    saveReceipt({ ...receipt, trackingToken: token });
+    fetchMock.mockResolvedValueOnce(Response.json({ error: token }, { status: 403 }));
+    mount(receiptPath, "ar");
+    expect((await screen.findByRole("alert")).textContent).toContain(ar.receiptMissing);
+    expect(screen.queryByText(id)).toBeNull();
+    expect(document.body.textContent).not.toContain(token);
+  });
+
+  it.each(["network", "service"] as const)("keeps a temporary %s tracking error retryable", async (failure) => {
+    saveReceipt({ ...receipt, trackingToken: token });
+    if (failure === "network") fetchMock.mockRejectedValueOnce(new Error(token));
+    else fetchMock.mockResolvedValueOnce(Response.json({ error: token }, { status: 503 }));
+    mount(receiptPath);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en.trackingUnavailable);
+    expect(alert.textContent).not.toContain(en.receiptMissing);
+    expect(document.body.textContent).not.toContain(token);
+    expect(localStorage.getItem(storageKey)).not.toBeNull();
+    expect((screen.getByRole("button", { name: en.refreshReceipt }) as HTMLButtonElement).disabled).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps service-status authorization errors separate from missing receipts", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ error: token }, { status: 403 }));
+    await expect(getServiceStatus(new AbortController().signal)).rejects.toMatchObject({ code: "unavailable" });
   });
 
   it("can track and remove a receipt in the tab when persistent storage fails", async () => {

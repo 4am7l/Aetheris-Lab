@@ -91,9 +91,12 @@ function Login() {
 
 export default function App() {
   const [language, setLanguage] = useState<"en" | "ar">(() => preference("aetheris.lang") === "ar" ? "ar" : "en");
-  const [theme, setTheme] = useState(() => preference("aetheris.theme"));
+  const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
+    const saved = preference("aetheris.theme");
+    return saved === "system" || saved === "light" || saved === "dark" ? saved : "system";
+  });
   const systemDark = useSyncExternalStore(subscribeColor, isSystemDark);
-  const mode = theme === "dark" || (theme !== "light" && systemDark) ? "dark" : "light";
+  const mode = theme === "system" ? (systemDark ? "dark" : "light") : theme;
   const rtl = language === "ar";
   const materialTheme = useMemo(() => createLabTheme(mode, rtl ? "rtl" : "ltr"), [mode, rtl]);
   const t = (key: AdminTextKey) => adminText(key, language);
@@ -131,7 +134,7 @@ export default function App() {
     document.documentElement.dir = rtl ? "rtl" : "ltr";
     document.documentElement.dataset.theme = mode;
     storePreference("aetheris.lang", language);
-    if (theme) storePreference("aetheris.theme", theme);
+    storePreference("aetheris.theme", theme);
   }, [language, rtl, mode, theme]);
 
   useEffect(() => {
