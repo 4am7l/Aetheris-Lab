@@ -273,6 +273,8 @@ export const en = {
 export type TextKey = keyof typeof en;
 // Partial dictionary fallback keeps new keys safe; expand and professionally review before public Arabic release.
 export const ar: Partial<Record<TextKey, string>> = {
+  searchSelect: "البحث عن مادة في المكتبة",
+  sourceSelection: "الاختيار من المكتبة مرجع للتعرّف على المادة، وليس تحققًا من العينة الفعلية.",
   reviewedScientificReport: "التقرير العلمي المُراجَع",
   saltOptIn: "تقييم محلولين مائيين مخفّفين من كلوريد الصوديوم",
   saltAssumptions: "أؤكد أن المحلولين يحتويان على الماء وكلوريد الصوديوم فقط، وأنهما سائلان عند 25 °م، وأن التقييم جرى عند الضغط المحيط دون فقدان المادة. يشير التركيز الصفري إلى الماء النقي. سجّل الحجم النهائي المقاس واذكر أي ظروف أخرى في الملاحظات.",
