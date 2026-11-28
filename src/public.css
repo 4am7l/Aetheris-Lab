@@ -39,22 +39,6 @@
   --scrim: rgb(0 0 0 / 48%);
 }
 
-/* Native and Material selects share the same arrow-free appearance. */
-select {
-  -webkit-appearance: none;
-  appearance: none;
-  background-image: none;
-  background-repeat: no-repeat;
-}
-
-select:not(:disabled) {
-  cursor: pointer;
-}
-
-:root :is(.MuiNativeSelect-icon, .MuiSelect-icon) {
-  display: none;
-}
-
 :is(input:not([type="checkbox"], [type="radio"], [type="file"], [type="hidden"]), textarea, select):not(.MuiInputBase-input) {
   min-inline-size: 0;
   min-block-size: var(--field-height);

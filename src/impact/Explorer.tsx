@@ -6,7 +6,7 @@ import PageHeading from "../components/PageHeading";
 import SearchField from "../components/SearchField";
 import { useLanguage } from "../text";
 import type { CompoundDetail, CompoundReference, PairEvidence } from "./science";
-import type { CatalogChemical, OrganizationDirectory } from "./contracts";
+import type { CatalogChemical, CatalogPage, OrganizationDirectory } from "./contracts";
 import { FormError, LabInput, LabSelect, Submit } from "./Inputs";
 import { field, optional } from "./formData";
 import { RateDetails, WriteForm, type ChemicalDetailData } from "./Management";
@@ -17,7 +17,6 @@ import "./impact.css";
 const publicApi = labApi("/api/impact");
 const Molecule = lazy(() => import("./Molecule"));
 type PairResult = { assessment: string; requiresQualifiedReview: boolean; conflicting: boolean; evidence: PairEvidence[] };
-type CatalogPage = { chemicals: CatalogChemical[]; next: string | null };
 
 function StaticFacts({ chemical }: { chemical: CatalogChemical }) {
   const lang = useLanguage();

@@ -40,7 +40,7 @@ npm test
 - Direct one-click light/dark toggle with a persistent preference and system detection until the first explicit selection; English default, Arabic dictionary with RTL layout and English fallback for untranslated content. Arabic localization is a starting point and needs full professional translation before public release.
 - Independent solution forms with CAS checksum, concentration/unit, state, solvent, temperature, quantity, composition notes and explicit Unknown fields. Catalog selection does not assume the physical state or concentration of a solution.
 - Camera preview, capture, retake, stream cleanup, denial/error handling, upload fallback, image preview/removal, JPEG/PNG/WebP and 10 MB validation. Camera images are resized to a maximum width of 2000 px. Images stay in the form unless the requester chooses to attach them for review. Attached photos are stored in private R2.
-- Four actual NIOSH substance records checked 2026-11-20; indexed name, alias, ASCII formula/subscript normalization, CAS and category search. No invented records, GHS claims, or solution-specific conclusions.
+- The public Chemical Library reads the full D1 catalog with instant Arabic and English name, formula, CAS, and alias search. The assessment identity picker uses four source-linked NIOSH substance records checked 2026-11-20.
 - Browser-local drafts with JSON download. Older preview records remain readable as archived local data.
 - Public intake and token-protected tracking through a same-origin Pages Function, with rate limiting and D1 storage in the Worker. The browser stores a private, removable tracking token for each receipt. See [Cloudflare setup and API contract](docs/cloudflare.md).
 - Scheduled PubChem and NIOSH evidence collection, deterministic chemical calculations, Gemini scientific assessments, and a protected bilingual expert review dashboard.
@@ -55,9 +55,10 @@ npm test
 | `src/styles.css`                  | Responsive theme tokens and components; Tailwind import            |
 | `src/domain.ts`                   | Zod schemas and scientific input validation                        |
 | `src/i18n.ts`                     | English/Arabic UI dictionaries                                     |
-| `src/data/chemicals.ts`           | Small source-linked catalog                                        |
+| `src/services/publicCatalog.ts`   | Public D1 catalog and detail client                                |
+| `src/data/chemicals.ts`           | NIOSH index for assessment identity selection                      |
 | `src/services/contracts.ts`       | Integration interfaces                                             |
-| `src/services/local.ts`           | Local drafts and chemical catalog services                         |
+| `src/services/local.ts`           | Local drafts and assessment identity lookup                        |
 | `src/services/publicRequests.ts`  | Public intake and receipt client                                   |
 | `functions/api/`                  | Public Pages gateway for intake, tracking, and health              |
 | `admin/`                          | Independent reviewer application and admin Pages Functions        |

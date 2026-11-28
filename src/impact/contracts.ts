@@ -9,6 +9,11 @@ export interface CatalogChemical {
   institutionId: string | null; labId: string | null;
 }
 
+export interface CatalogPage {
+  chemicals: CatalogChemical[];
+  next: string | null;
+}
+
 export interface ImpactEvent {
   id: number; state: ImpactState; createdAt: string;
   activities: Activity[]; calculation: ImpactCalculation | null; reason: string | null;
