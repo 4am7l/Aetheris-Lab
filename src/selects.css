@@ -1,0 +1,22 @@
+/* Cover native controls and Material selects, including those rendered in portals. */
+:root select {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+:root :is(select, .MuiSelect-select) {
+  background-image: none;
+  background-repeat: no-repeat;
+}
+
+:root select:not(:disabled) {
+  cursor: pointer;
+}
+
+:root :is(.MuiNativeSelect-icon, .MuiSelect-icon) {
+  display: none;
+}
+
+:root .MuiOutlinedInput-root > :is(.MuiNativeSelect-select, .MuiSelect-select) {
+  padding-inline-end: 14px;
+}

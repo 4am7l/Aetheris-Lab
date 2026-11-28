@@ -5,6 +5,7 @@ import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-qu
 import App from "./App";
 import { sessionQueryKey, AdminError } from "./api";
 import "../../src/styles.css";
+import "../../src/selects.css";
 import "./admin.css";
 
 const client = new QueryClient({

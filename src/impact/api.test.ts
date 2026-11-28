@@ -9,7 +9,7 @@ import { blankSolution, type CreatedReceipt } from "../domain";
 import { member, platform } from "../../worker/impact/access";
 import { evaluateScenario, operationImpact } from "../../worker/impact/ledger";
 import { scenarioSchema } from "./model";
-import type { AssessmentImpact, AssessmentStatistics, CatalogChemical, ImpactOverview, OperationImpact } from "./contracts";
+import type { AssessmentImpact, AssessmentStatistics, CatalogChemical, CatalogPage, ImpactOverview, OperationImpact } from "./contracts";
 
 const base = "/api/impact";
 const ws = base + "/workspace";
@@ -209,6 +209,59 @@ describe("sustainability reference and tenant access", () => {
     const arabic = await ok<{ chemicals: CatalogChemical[] }>(await call(base + "/chemicals?q=" + encodeURIComponent("نترات الفضة")));
     expect(arabic.chemicals.map((x) => x.cas)).toEqual(["7761-88-8"]);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  it("lists all 25 imported formulations and finds each by Arabic and English name, CAS and Unicode formula", async () => {
+    const original = db.prepare("SELECT id, concentration FROM fixed_guide_reference ORDER BY id").all();
+    const list = await ok<CatalogPage>(await call(base + "/chemicals"));
+    expect(original).toHaveLength(25);
+    expect(list.next).toBeNull();
+    expect(list.chemicals.map(({ id, concentration }) => ({ id, concentration }))).toEqual(original);
+    for (const chemical of list.chemicals) {
+      const formula = chemical.formula!.replace(/[0-9]/g, (digit) => "₀₁₂₃₄₅₆₇₈₉"[Number(digit)]);
+      for (const q of [chemical.nameAr, chemical.nameEn.toUpperCase(), chemical.cas!, formula]) {
+        const result = await ok<CatalogPage>(await call(base + "/chemicals?" + new URLSearchParams({ q })));
+        expect(result.chemicals, q).toContainEqual(chemical);
+      }
+    }
+    const legacyAlias = await ok<CatalogPage>(await call(base + "/chemicals?q=caustic"));
+    expect(legacyAlias.chemicals.map(({ id }) => id)).toEqual(["reference-sodium-hydroxide"]);
+    const formulationAlias = await ok<CatalogPage>(await call(base + "/chemicals?" + new URLSearchParams({ q: "فورمالين" })));
+    expect(formulationAlias.chemicals.map(({ id }) => id)).toEqual(["reference-formaldehyde"]);
+  });
+
+  it("paginates filtered public results by record ID and preserves formulations that share a CAS", async () => {
+    const supplemental = {
+      nameEn: "Hydrogen peroxide", nameAr: "بيروكسيد الهيدروجين", formula: "H₂O₂", cas: "7722-84-1",
+      concentration: "3%", aliases: ["Supplemental peroxide alias"], source: "https://example.test/reference",
+    };
+    const { id } = await ok<{ id: string }>(await admin("/chemicals", supplemental), 201);
+    const { id: privateId } = await ok<{ id: string }>(await admin("/chemicals", { ...supplemental, institutionId: "uni-a" }), 201);
+    const partialAlias = await ok<CatalogPage>(await call(base + "/chemicals?q=peroxide%20alias"));
+    expect(partialAlias.chemicals.map((item) => item.id)).toEqual([id]);
+    expect((await call(base + "/chemicals/" + privateId)).status).toBe(404);
+
+    const formulaSearch = await ok<CatalogPage>(await call(base + "/chemicals?q=H2O2"));
+    expect(formulaSearch.chemicals.map((item) => [item.id, item.concentration])).toEqual([
+      [id, "3%"], ["reference-hydrogen-peroxide", "30%"],
+    ]);
+
+    db.exec(`WITH RECURSIVE n(i) AS (VALUES (1) UNION ALL SELECT i + 1 FROM n WHERE i < 51)
+      INSERT INTO chemical_references (id, name_en, name_ar, status, provenance_json, updated_at)
+      SELECT printf('zz-fixture-%02d', i), 'Additional public formulation', 'تركيبة عامة إضافية',
+        'unverified', '{}', '2026-11-27' FROM n`);
+    const search = (q: string, after = "") =>
+      call(base + "/chemicals?" + new URLSearchParams({ q, after })).then((response) => ok<CatalogPage>(response));
+    const first = await search("public formulation");
+    expect(first.chemicals).toHaveLength(50);
+    expect(first.next).toBe("zz-fixture-50");
+    const last = await search("public formulation", first.next!);
+    expect(last.next).toBeNull();
+    expect(last.chemicals.map((item) => item.id)).toEqual(["zz-fixture-51"]);
+    const all = await search("");
+    expect(all.chemicals.map((item) => item.id)).toContain("reference-ethanol");
+    expect(all.next).not.toBeNull();
+    expect((await search("", all.next!)).chemicals.some((item) => item.id === "zz-fixture-51")).toBe(true);
   });
 
   it("redeems single-use invitations atomically and rejects unauthorized dashboard and cross-tenant receipt access", async () => {

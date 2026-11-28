@@ -28,6 +28,10 @@ const terms: Record<string, [string, string]> = {
   measureDisposal: ["Disposal", "التخلص"], measureRecovery: ["Recovery", "الاسترجاع"],
   unverified: ["Unverified", "غير موثّق"], combined: ["Combined reference", "مرجع مجمّع"],
   "institution-admin": ["Institution administrator", "مسؤول المؤسسة"], reviewer: ["Qualified reviewer", "مراجع مؤهل"],
+  "inorganic-acid": ["Inorganic acid", "حمض غير عضوي"], "organic-acid": ["Organic acid", "حمض عضوي"],
+  base: ["Base", "قاعدة"], "nonhalogenated-solvent": ["Non-halogenated solvent", "مذيب غير مهلجن"],
+  "halogenated-solvent": ["Halogenated solvent", "مذيب مهلجن"], oxidizer: ["Oxidizer", "مؤكسد"],
+  "metal-salt": ["Metal salt", "ملح معدني"], organic: ["Organic", "عضوي"],
   "lab-manager": ["Laboratory manager", "مسؤول المختبر"], viewer: ["Viewer", "مطّلع"],
   submitted: ["Submitted", "مقدّم"], incompatible: ["Documented incompatibility", "عدم توافق موثّق"],
   conditional: ["Conditional compatibility", "توافق مشروط"], insufficient: ["Insufficient evidence", "أدلة غير كافية"],
@@ -37,8 +41,7 @@ const terms: Record<string, [string, string]> = {
   revision: ["Revision", "المراجعة"],
 };
 export function labLabel(lang: LabLanguage, item: string) {
-  const term = terms[item];
-  return term ? words(lang, ...term) : item;
+  return Object.hasOwn(terms, item) ? words(lang, ...terms[item]) : item;
 }
 export function numberLabel(lang: LabLanguage, number: number | null | undefined, unit?: string) {
   if (number === null || number === undefined) return words(lang, "Not available", "غير متاح");

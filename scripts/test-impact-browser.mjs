@@ -78,8 +78,10 @@ async function fixture() {
   insert.run(receipt.id, "verified", now, JSON.stringify({ realizedEvidence: "Synthetic baseline and outcome comparison", result: {
     currency: "JOD", net: comparison(9, 7), avoidedCo2e: comparison(0.15, 0), wasteAvoided: comparison(0.05, 0),
   } }), JSON.stringify([hash("browser-fixture:" + receipt.id)]));
+  const originals = db.prepare("SELECT id, nameAr, nameEn, formula, cas FROM fixed_guide_reference ORDER BY id").all();
+  assert.equal(originals.length, 25);
   db.close();
-  return { receipt, manager };
+  return { receipt, manager, originals };
 }
 
 async function arrowFree(page) {
@@ -107,9 +109,10 @@ async function materialFocus(field) {
   assert.deepEqual(styles, { border: "0px", outline: "none", fieldStroke: "2px", height: "52px" });
 }
 
-async function checkPublicFields(page) {
+async function checkPublicFields(page, originals) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(ui);
+  await page.locator(".sidebar nav .material-symbols-rounded").first().waitFor();
   const renderedIcons = await page.evaluate(async () => {
     await document.fonts.ready;
     return [...document.querySelectorAll(".sidebar nav .material-symbols-rounded")].map((icon) => icon.getBoundingClientRect().width);
@@ -153,7 +156,32 @@ async function checkPublicFields(page) {
   assert.equal(await page.locator(".sidebar").evaluate((el) => el.ownerDocument.defaultView.getComputedStyle(el).backdropFilter), "none");
   await page.emulateMedia({ forcedColors: "none" });
   assert.equal(await page.locator(".sidebar").evaluate((el) => el.ownerDocument.defaultView.getComputedStyle(el).backdropFilter), "blur(14px)");
+  for (const { id } of originals) await page.locator(`.catalog-row[href="/library/${id}"]`).waitFor();
   await page.screenshot({ path: path.join(output, "library-light-desktop.png") });
+
+  for (const { id, nameAr, nameEn, cas, formula } of originals) {
+    for (const term of [nameAr, nameEn, cas, formula.replace(/\d/g, digit => "₀₁₂₃₄₅₆₇₈₉"[Number(digit)])]) {
+      await librarySearch.fill(term);
+      await page.locator(`.catalog-row[href="/library/${id}"]`).waitFor();
+    }
+  }
+  await librarySearch.fill("caustic");
+  await page.locator('.catalog-row[href="/library/reference-sodium-hydroxide"]').waitFor();
+  await librarySearch.fill("no-matching-browser-fixture");
+  await page.getByRole("heading", { name: "No matching entries" }).waitFor();
+  await clearSearch.click();
+  await page.getByRole("button", { name: "Metal salt", exact: true }).click();
+  assert(await page.locator(".catalog-row").count() > 0);
+  assert.equal(await page.locator(".catalog-row").filter({ hasNotText: "Metal salt" }).count(), 0);
+  await page.getByRole("button", { name: "All entries", exact: true }).click();
+  await page.locator('.catalog-row[href="/library/reference-silver-nitrate"]').click();
+  await page.getByRole("heading", { name: "Silver nitrate" }).waitFor();
+  await page.getByText(/Section 4 · Page 4 · Row 20/).waitFor();
+  await page.getByText("Price versions", { exact: true }).click();
+  await page.getByText("Carbon factor versions", { exact: true }).click();
+  await page.getByText("45 JOD/L", { exact: true }).waitFor();
+  await page.getByText("1.50 kg CO₂e/L", { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, "library-reference-desktop.png"), fullPage: true });
 
   await page.goto(ui + "/analysis");
   await page.getByRole("button", { name: "Search library", exact: true }).first().click();
@@ -180,11 +208,17 @@ async function checkPublicFields(page) {
   assert.equal(await page.locator(":is(.MuiNativeSelect-icon, .MuiSelect-icon):visible").count(), 0);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(ui + "/library/explorer");
+  await page.goto(ui + "/library");
   await page.getByText("العربية", { exact: true }).click();
   await page.getByRole("button", { name: "تفعيل الوضع الداكن", exact: true }).click();
   assert.equal(await page.locator("html").getAttribute("dir"), "rtl");
   assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
+  await page.locator('.catalog-row[href="/library/reference-acetone"]').waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.mouse.move(1, 1);
+  await page.getByRole("tooltip").waitFor({ state: "hidden" });
+  await page.screenshot({ path: path.join(output, "library-dark-rtl-mobile.png") });
+  await page.goto(ui + "/library/explorer");
   const explorerSearch = page.getByRole("searchbox", { name: "البحث في المراجع الكيميائية" });
   await materialFocus(explorerSearch);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -222,7 +256,7 @@ async function checkTouch(browser) {
 }
 
 async function main() {
-  const { receipt, manager } = await fixture();
+  const { receipt, manager, originals } = await fixture();
   const browser = await chromium.launch({ headless: true, executablePath: process.env.AETHERIS_TEST_CHROMIUM });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, acceptDownloads: true });
   await context.route("**/*", (route) => {
@@ -243,7 +277,7 @@ async function main() {
     }
   });
   try {
-    await checkPublicFields(page);
+    await checkPublicFields(page, originals);
     await page.goto(ui + "/tools");
     await page.getByRole("heading",{ name:"Periodic table", exact: true }).waitFor();
     await arrowFree(page);
@@ -338,7 +372,7 @@ async function main() {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, route + " overflows at 320 px");
     }
     assert.deepEqual(errors, []);
-    console.log("PASS public controls: keyboard and touch, native and Material selects, single field focus, both search forms, local icons, navigation states and high-contrast fallback");
+    console.log("PASS public controls: all 25 D1 entries listed and individually searchable, source records, keyboard and touch, arrow-free selects, single field focus, navigation and high-contrast fallback");
     console.log("PASS Chromium at 390 px: local catalogue, periodic table, molar mass, comparison, matrix, receipt-scoped automatic impact in both languages and themes, assessment PDFs, SDS extraction and identical private R2 download");
   } catch (err) {
     await page.screenshot({ path: path.join(output, "smoke-failure.png"), fullPage: true }).catch(() => {});

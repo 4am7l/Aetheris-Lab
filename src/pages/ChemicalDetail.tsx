@@ -1,73 +1,82 @@
 import { Link, useParams } from "react-router-dom";
-import { chemicals } from "../data/chemicals";
+import Button from "@mui/material/Button";
+import { substanceReferencesByCas } from "../data/substanceReferences";
+import { catalogAliases, readCatalogProvenance } from "../impact/catalogSearch";
+import { ImpactError } from "../impact/client";
+import { labLabel } from "../impact/labels";
+import { RateDetails } from "../impact/Management";
+import { httpsUrl } from "../impact/model";
+import { usePublicChemical } from "../services/publicCatalog";
 import { Icon, Notice } from "../ui";
-import { useText } from "../text";
+import { useLanguage, useText } from "../text";
+import "../impact/impact.css";
+
 export default function ChemicalDetail() {
-  const { id } = useParams();
+  const { id = "" } = useParams();
   const t = useText();
-  const c = chemicals.find((v) => v.id === id);
-  if (!c) return <div className="page">{t("empty")}</div>;
+  const language = useLanguage();
+  const detail = usePublicChemical(id);
+  const c = detail.data?.chemical;
+  const reference = c ? readCatalogProvenance(c.provenance) : {};
+  const source = httpsUrl.safeParse(reference.url);
+  const substanceReference = c && substanceReferencesByCas.get(c.cas ?? "");
+  const aliases = c ? catalogAliases(c) : [];
+  const missing = detail.error instanceof ImpactError && detail.error.status === 404;
   return (
     <div className="page detail-page">
       <Link className="text-link" to="/library">
         {t("back")} · {t("library")}
       </Link>
-      <div className="chemical-detail-header">
-        <div>
-          <span className="eyebrow">NIOSH REFERENCE · {c.category}</span>
-          <h1>{c.name}</h1>
-          <p>{c.aliases.join(" · ")}</p>
+      {detail.isPending && <p role="status">{t("loading")}</p>}
+      {missing && <p role="status">{t("catalogReferenceMissing")}</p>}
+      {detail.isError && !missing && <Notice kind="error">
+        {t("catalogUnavailable")} <Button onClick={() => void detail.refetch()} disabled={detail.isFetching}>{t("retry")}</Button>
+      </Notice>}
+      {c && detail.data && <>
+        <div className="chemical-detail-header">
+          <div>
+            <span className="eyebrow">{labLabel(language, c.status)}</span>
+            <h1>{language === "ar" ? c.nameAr : c.nameEn}</h1>
+            <p dir="auto">{language === "ar" ? c.nameEn : c.nameAr}</p>
+            {aliases.length > 0 && <p>{t("catalogAliases")} · {aliases.map((alias, i) =>
+              <span key={alias}>{i > 0 && " · "}<bdi>{alias}</bdi></span>)}</p>}
+          </div>
+          {c.formula && <span className="large-formula">{c.formula}</span>}
         </div>
-        <span className="large-formula">{c.formula}</span>
-      </div>
-      <div className="detail-meta panel">
-        <div>
-          {t("cas")}
-          <strong>{c.cas}</strong>
+        <div className="detail-meta panel">
+          {[
+            [t("cas"), c.cas], [t("concentration"), c.concentration], [t("classification"), c.category && labLabel(language, c.category)],
+            [t("state"), c.state], [t("catalogFormulation"), c.formulation], [t("catalogPurity"), c.purity], [t("solvent"), c.solvent],
+          ].map(([label, value]) => <div key={label}>{label}<strong><bdi>{value ?? t("catalogNotRecorded")}</bdi></strong></div>)}
         </div>
-        <div>
-          {t("mass")}
-          <strong>{c.mass} g/mol</strong>
-        </div>
-        <div>
-          {t("state")}
-          <strong>{c.state}</strong>
-        </div>
-        <div>
-          {t("sourceDate")}
-          <strong>{c.verifiedOn}</strong>
-        </div>
-      </div>
-      <div className="detail-grid">
-        {[
-          [t("physical"), c.description, "science"],
-          [t("hazards"), c.hazards, "warning"],
-          [t("incompatibilities"), c.incompatibilities, "report"],
-          [t("storage"), t("storageNote"), "inventory_2"],
-        ].map(([title, body, icon]) => (
-          <section className="panel" key={title}>
-            <Icon name={icon} />
-            <h2>{title}</h2>
-            <p>{body}</p>
-          </section>
-        ))}
-      </div>
-      <Notice>{t("notVerified")}</Notice>
-      <section className="panel">
-        <h2>{t("references")}</h2>
-        <a
-          className="text-link"
-          href={c.source}
-          target="_blank"
-          rel="noreferrer"
-        >
-          CDC / NIOSH Pocket Guide · {c.name} <Icon name="open_in_new" />
-        </a>
-        <p className="small muted">
-          This substance reference does not determine compatibility for your
-          solution or conditions.
-        </p>
-      </section>
+        {(c.hazards || c.wasteCategory) && <div className="detail-grid">
+          {c.hazards && <section className="panel">
+            <h2>{t("catalogHazards")}</h2>
+            <p dir="auto">{c.hazards}</p>
+          </section>}
+          {c.wasteCategory && <section className="panel">
+            <h2>{t("catalogWaste")}</h2>
+            <p dir="auto">{c.wasteCategory}</p>
+          </section>}
+        </div>}
+        {c.status === "unverified" && <Notice>{t("catalogVerification")}</Notice>}
+        <section className="panel">
+          <h2>{t("references")}</h2>
+          {typeof reference.document === "string" && <p>
+            <bdi>{reference.document}</bdi>
+            {typeof reference.section === "number" && <> · {t("catalogSection")} {reference.section}</>}
+            {typeof reference.page === "number" && <> · {t("catalogPage")} {reference.page}</>}
+            {typeof reference.row === "number" && <> · {t("catalogRow")} {reference.row}</>}
+          </p>}
+          {source.success && <p><a className="text-link" href={source.data} target="_blank" rel="noreferrer">
+            {t("catalogSource")} <Icon name="open_in_new" />
+          </a></p>}
+          {substanceReference && <p><a className="text-link" href={substanceReference.source} target="_blank" rel="noreferrer">
+            {t("catalogNiosh")} <Icon name="open_in_new" />
+          </a></p>}
+          <RateDetails item={detail.data} />
+        </section>
+      </>}
     </div>
   );
 }

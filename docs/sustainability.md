@@ -85,6 +85,8 @@ npm run test:impact-browser
 
 The test writes fixtures to that disposable local store and captures outputs in `.wrangler/impact-browser-results`. It requires an unused local test instance on those ports.
 
+Run `npm run test:admin-browser` against a local HTTPS preview of the admin Pages app with its service binding pointed at the same isolated Worker. Use `https://localhost:4174` or set `AETHERIS_TEST_ADMIN` to the preview origin. Configure the preview and Worker with that `ADMIN_ORIGIN` and matching proxy secrets, and set `AETHERIS_TEST_ADMIN_PASSWORD` to the local Worker password. The test requires `AGENT_ENABLED=false` and captures screenshots under `.wrangler/admin-browser-results`.
+
 ## Cloudflare rollout after release approval
 
 1. Identify the existing public Pages, admin Pages and Worker versions for rollback. Record a D1 Time Travel bookmark. Use the existing release configuration in [Cloudflare setup](cloudflare.md).

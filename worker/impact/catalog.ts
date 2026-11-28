@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { D1Database } from "@cloudflare/workers-types";
+import { substanceReferences } from "../../src/data/substanceReferences";
 import { validCas } from "../../src/domain";
+import { chemicalSubscripts, normalizeCatalogTerm } from "../../src/impact/catalogSearch";
 import type { CatalogChemical } from "../../src/impact/contracts";
 import { carbonStages, currencyCode, httpsUrl, quantityUnits, referenceId, type Reference, type Density, type Scenario } from "../../src/impact/model";
 import { error, json } from "../http";
@@ -15,6 +17,7 @@ const chemicalSchema = z.strictObject({
   purity: shortText.optional(), solvent: shortText.optional(), formulation: shortText.optional(),
   physicalState: shortText.optional(), category: shortText.optional(), hazardEvidence: longText.optional(),
   wasteCategory: shortText.optional(), source: httpsUrl, verified: z.boolean().default(false),
+  aliases: z.array(shortText).max(20).optional(),
   institutionId: referenceId.optional(), labId: referenceId.optional(),
 });
 const versionScope = {
@@ -43,6 +46,8 @@ const chemicalColumns = `id, name_ar AS nameAr, name_en AS nameEn, cas, formula,
   concentration, purity, solvent, formulation, physical_state AS state, category, hazard_evidence AS hazards,
   waste_category AS wasteCategory, status, updated_at AS updatedAt, provenance_json AS provenance,
   institution_id AS institutionId, lab_id AS labId`;
+const foldedTerm = [...chemicalSubscripts].reduce((sql, digit, index) => `replace(${sql}, '${digit}', '${index}')`, "lower(term.value)");
+const pageSize = 50;
 
 function readerScope(scope?: Scope) {
   if (scope?.global) return { sql: "1", values: [] };
@@ -54,16 +59,26 @@ function readerScope(scope?: Scope) {
 }
 
 export async function catalogSearch(db: D1Database, url: URL, scope?: Scope) {
-  const q = (url.searchParams.get("q") ?? "").trim().slice(0, 160).toLowerCase();
+  const q = normalizeCatalogTerm(url.searchParams.get("q") ?? "").slice(0, 160);
   const after = url.searchParams.get("after") ?? "";
   if (after && !referenceId.safeParse(after).success) return error("INVALID_REQUEST", 400);
   const access = readerScope(scope);
+  const aliasMatches = q ? Object.values(substanceReferences)
+    .filter(({ aliases, formula }) => [...aliases, formula].some((term) => normalizeCatalogTerm(term).includes(q)))
+    .map(({ cas }) => cas) : [];
+  const filter = q ? `AND (
+    EXISTS (SELECT 1 FROM json_each(json_array(name_en, name_ar, cas, formula, concentration, formulation, category)) term
+      WHERE instr(${foldedTerm}, ?))
+    OR (json_type(provenance_json, '$.aliases') = 'array' AND EXISTS (
+      SELECT 1 FROM json_each(provenance_json, '$.aliases') term WHERE term.type = 'text' AND instr(${foldedTerm}, ?)))
+    OR CAST(pubchem_cid AS TEXT) = ?
+    ${aliasMatches.length ? `OR cas IN (${aliasMatches.map(() => "?").join(",")})` : ""}
+  )` : "";
   const rows = await db.prepare(`SELECT ${chemicalColumns} FROM chemical_references WHERE ${access.sql}
-    AND id > ? AND (? = '' OR instr(lower(name_en), ?) OR instr(name_ar, ?) OR instr(cas, ?)
-      OR instr(lower(formula), ?) OR CAST(pubchem_cid AS TEXT) = ?)
-    ORDER BY id LIMIT 51`).bind(...access.values, after, q, q, q, q, q, q).all<CatalogChemical>();
-  const chemicals = rows.results.slice(0, 50);
-  return json({ chemicals, next: rows.results.length > 50 ? chemicals.at(-1)?.id : null });
+    AND id > ? ${filter} ORDER BY id LIMIT ?`)
+    .bind(...access.values, after, ...(q ? [q, q, q, ...aliasMatches] : []), pageSize + 1).all<CatalogChemical>();
+  const chemicals = rows.results.slice(0, pageSize);
+  return json({ chemicals, next: rows.results.length > pageSize ? chemicals[pageSize - 1].id : null });
 }
 
 export async function catalogDetail(db: D1Database, id: string, scope?: Scope) {
@@ -122,7 +137,7 @@ export async function addChemical(request: Request, db: D1Database, scope: Scope
       .bind(id, institutionId, labId, data.nameAr, data.nameEn, data.cas ?? null, data.formula ?? null, data.cid ?? null,
         data.concentration ?? null, data.purity ?? null, data.solvent ?? null, data.formulation ?? null,
         data.physicalState ?? null, data.category ?? null, data.hazardEvidence ?? null, data.wasteCategory ?? null,
-        data.verified ? "verified" : "unverified", JSON.stringify({ url: data.source }), timestamp()),
+        data.verified ? "verified" : "unverified", JSON.stringify({ url: data.source, aliases: data.aliases }), timestamp()),
     audit(db, scope, "chemical-created", id, institutionId, labId),
   ]);
   return json({ id }, 201);

@@ -1,12 +1,11 @@
 import type { ChemicalRecord } from "../domain";
+import { substanceReferences } from "./substanceReferences";
 // Small, reviewed seed catalog. These are substance references, never solution-specific verdicts.
 export const chemicals: ChemicalRecord[] = [
   {
+    ...substanceReferences.ethanol,
     id: "ethanol",
     name: "Ethanol",
-    aliases: ["Ethyl alcohol", "EtOH", "Grain alcohol"],
-    formula: "CH3CH2OH",
-    cas: "64-17-5",
     category: "Solvents",
     mass: 46.1,
     state: "Liquid",
@@ -15,15 +14,12 @@ export const chemicals: ChemicalRecord[] = [
       "NIOSH lists a Class IB flammable liquid. Consult the linked reference and your product SDS.",
     incompatibilities:
       "NIOSH lists strong oxidizers, sodium, and several other reactive substances; consult the full source.",
-    source: "https://www.cdc.gov/niosh/npg/npgd0262.html",
     verifiedOn: "2026-11-20",
   },
   {
+    ...substanceReferences.acetone,
     id: "acetone",
     name: "Acetone",
-    aliases: ["Dimethyl ketone", "2-Propanone"],
-    formula: "(CH3)2CO",
-    cas: "67-64-1",
     category: "Solvents",
     mass: 58.1,
     state: "Liquid",
@@ -31,15 +27,12 @@ export const chemicals: ChemicalRecord[] = [
     hazards:
       "NIOSH lists a Class IB flammable liquid. Consult the linked reference and your product SDS.",
     incompatibilities: "NIOSH lists oxidizers and acids.",
-    source: "https://www.cdc.gov/niosh/npg/npgd0004.html",
     verifiedOn: "2026-11-20",
   },
   {
+    ...substanceReferences["sodium-hydroxide"],
     id: "sodium-hydroxide",
     name: "Sodium hydroxide",
-    aliases: ["Caustic soda", "Lye", "Sodium hydrate"],
-    formula: "NaOH",
-    cas: "1310-73-2",
     category: "Bases",
     mass: 40,
     state: "Solid",
@@ -49,15 +42,12 @@ export const chemicals: ChemicalRecord[] = [
       "NIOSH describes eye and skin burns and heat generation on contact with water.",
     incompatibilities:
       "NIOSH lists acids, certain metals, flammable liquids, water, and other substances; consult the full source.",
-    source: "https://www.cdc.gov/niosh/npg/npgd0565.html",
     verifiedOn: "2026-11-20",
   },
   {
+    ...substanceReferences["hydrogen-peroxide"],
     id: "hydrogen-peroxide",
     name: "Hydrogen peroxide",
-    aliases: ["Hydrogen dioxide", "Peroxide", "Hydroperoxide"],
-    formula: "H2O2",
-    cas: "7722-84-1",
     category: "Oxidizers",
     mass: 34,
     state: "Liquid",
@@ -67,7 +57,6 @@ export const chemicals: ChemicalRecord[] = [
       "NIOSH describes a powerful oxidizer; contact with combustible material can cause spontaneous combustion.",
     incompatibilities:
       "NIOSH lists oxidizable materials and several metals including iron and copper.",
-    source: "https://www.cdc.gov/niosh/npg/npgd0335.html",
     verifiedOn: "2026-11-20",
   },
 ];
