@@ -404,7 +404,7 @@ export function SolutionCard({
                 label={t("preMixingPh")} value={form.ph} error={Boolean(errors.ph)}
                 helperText={errors.ph && t("phInvalid")}
                 slotProps={{ htmlInput: { inputMode: "decimal", maxLength: 64 } }}
-                onChange={(event) => update("ph", event.target.value)} />}
+                onChange={(event) => { update("ph", event.target.value); setErrors((previous) => ({ ...previous, ph: "" })); }} />}
               {selection("state", t("state"), [
                 "Unknown",
                 "Liquid",

@@ -42,7 +42,7 @@ function localDecimal(value: string) {
   return value
     .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
     .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
-    .replaceAll("٫", ".").replaceAll("−", "-");
+    .replaceAll("٫", ".").replaceAll(",", ".").replaceAll("−", "-");
 }
 const submittedNumber = z.string().trim().max(64).transform(localDecimal);
 const knownOrUnknown = z
@@ -149,7 +149,7 @@ export const blankSolution: Solution = {
   notes: "",
   source: "Manual entry",
 };
-export const dilutionVolumeSchema = z.string().trim().max(64).refine(finiteDecimal);
+export const dilutionVolumeSchema = submittedNumber.refine(finiteDecimal);
 export const calculationInputSchema = z.strictObject({
   kind: z.enum(["aqueous-dilution", "aqueous-sodium-chloride"]),
   assumptionsConfirmed: z.literal(true),
