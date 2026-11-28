@@ -23,8 +23,8 @@ async function fetchCatalog(signal: AbortSignal) {
   return chemicals;
 }
 
-export function usePublicCatalog() {
-  return useQuery({ queryKey: ["public-chemical-catalog"], queryFn: ({ signal }) => fetchCatalog(signal), retry: false, staleTime: 60_000 });
+export function usePublicCatalog(enabled = true) {
+  return useQuery({ queryKey: ["public-chemical-catalog"], queryFn: ({ signal }) => fetchCatalog(signal), enabled, retry: false, staleTime: 60_000 });
 }
 
 export function usePublicChemical(id: string) {
