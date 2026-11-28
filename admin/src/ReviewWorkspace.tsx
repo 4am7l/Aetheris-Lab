@@ -185,6 +185,7 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
     onSettled: () => Promise.all([
       client.invalidateQueries({ queryKey }),
       client.invalidateQueries({ queryKey: ["admin", "queue"] }),
+      client.invalidateQueries({ queryKey: ["impact-overview"] }),
     ]),
     gcTime: 0,
   });
@@ -270,10 +271,9 @@ function RequestReview({ id, csrfToken }: { id: string; csrfToken: string }) {
           )}
           {request.approvedResult && <>
             <ApprovedResultPanel result={request.approvedResult} />
-            {!archived && <Suspense fallback={<p role="status">{t("loading")}</p>}>
-              <ReviewImpact id={id} api={labApi("/api/admin/impact", { csrf: csrfToken })}
-                scopeKey="platform" result={request.approvedResult} />
-            </Suspense>}
+            <Suspense fallback={<p role="status">{t("loading")}</p>}>
+              <ReviewImpact id={id} api={labApi("/api/admin/impact", { csrf: csrfToken })} />
+            </Suspense>
           </>}
           <section className="panel admin-section">
             <h2>{t("history")}</h2>

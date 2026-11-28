@@ -1,19 +1,24 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { z } from "zod";
-import type { ImpactBucket, ImpactLog, ImpactOverview, ImpactTotals } from "../../src/impact/contracts";
-import { activityKinds, currencyCode, currencyPrecision, impactStates, referenceId } from "../../src/impact/model";
+import type { AssessmentImpact, ImpactBucket, ImpactLog, ImpactOverview, ImpactTotals } from "../../src/impact/contracts";
+import { activityKinds, currencyPrecision, impactStates, referenceId } from "../../src/impact/model";
+import { publicRequestIdSchema, trackingTokenSchema } from "../../src/domain";
 import { error, json } from "../http";
 import type { Scope } from "./access";
+import { digest } from "./access";
 import { labLabel } from "../../src/impact/labels";
 import { en, ar } from "../../src/i18n";
 import { statusLabel } from "../../src/reviewText";
+import { receiptStatisticsBatchSize } from "../../src/impact/contracts";
+import { body } from "./io";
+import { comparisonAmount, statisticalLedgerJoins, supportedEstimate, supportedOutcome } from "./statisticalLedger";
 
-type Subject = { profileId: string } | Scope;
+type Subject = { receipts: string } | { requestId: string } | Scope;
 const filters = z.object({
   from: z.iso.date().optional(), to: z.iso.date().optional(), lab: referenceId.optional(),
   department: referenceId.optional(), university: referenceId.optional(), chemical: z.string().trim().max(120).optional(),
   q: z.string().trim().max(120).optional(), action: z.enum(activityKinds).optional(), status: z.enum(impactStates).optional(),
-  period: z.enum(["month", "quarter", "year", "all"]).default("month"), currency: currencyCode.default("JOD"),
+  period: z.enum(["month", "quarter", "year", "all"]).default("month"), currency: z.literal("JOD").default("JOD"),
   after: z.uuidv4().optional(), lang: z.enum(["en", "ar"]).default("en"),
 }).refine(({ from, to }) => !from || !to || from <= to);
 type Filters = z.infer<typeof filters>;
@@ -22,8 +27,11 @@ function dataset(subject: Subject, filter: Filters) {
   const args: (string | null)[] = [];
   const criteria: string[] = [];
   const add = (where: string, ...values: string[]) => { criteria.push(where); args.push(...values); };
-  const personal = "profileId" in subject;
-  if (personal) add("p.profile_id = ?", subject.profileId);
+  const personal = "receipts" in subject;
+  if (personal) add(`r.id IN (SELECT t.request_id FROM json_each(?) proof
+    JOIN public_request_tokens t ON t.request_id = json_extract(proof.value, '$.id')
+      AND t.token_sha256 = json_extract(proof.value, '$.proof'))`, subject.receipts);
+  else if ("requestId" in subject) add("r.id = ?", subject.requestId);
   else if (!subject.global) {
     add("a.institution_id = ?", subject.institutionId!);
     if (subject.labId) add("a.lab_id = ?", subject.labId);
@@ -39,18 +47,12 @@ function dataset(subject: Subject, filter: Filters) {
     WHERE instr(lower(json_extract(value, '$.name')), ?) OR json_extract(value, '$.cas') = ?)`, filter.chemical.toLowerCase(), filter.chemical);
   if (filter.q) add(`(instr(lower(r.id||' '||json_extract(r.input_json, '$.a.name')||' '||json_extract(r.input_json, '$.b.name')), ?)
     OR instr(lower(coalesce(json_extract(v.approved_result_json, '$.incompatibilities'), '')), ?))`, filter.q.toLowerCase(), filter.q.toLowerCase());
-  const beneficiary = personal ? "personal" : "institution";
-  const amount = (event: "s" | "e", metric: string, money = false) => {
-    const matchMoney = money ? `AND json_extract(${event}.calculation_json, '$.result.currency') = '${filter.currency}'
-      AND json_extract(${event}.calculation_json, '$.result.beneficiary') = '${beneficiary}'` : "";
-    return `CASE WHEN ${event}.integrity_version = 2 ${matchMoney}
-      THEN json_extract(${event}.calculation_json, '$.result.${metric}.difference') END`;
-  };
   const period = { month: "substr(r.created_at, 1, 7)", year: "substr(r.created_at, 1, 4)", all: "'all'",
     quarter: "substr(r.created_at, 1, 4) || '-Q' || (1 + (CAST(substr(r.created_at, 6, 2) AS INTEGER)-1)/3)" }[filter.period];
   const base = `(
     SELECT r.id, r.created_at AS date, ${period} AS period,
-      w.status, e.state, e.integrity_version AS integrityVersion, e.activities_json AS activities, a.lab_id AS labId, l.name_${filter.lang} AS labName,
+      w.status, e.state, coalesce(${supportedOutcome}, 0) AS verifiedOutcome, e.activities_json AS activities,
+      ${personal ? "NULL" : "a.lab_id"} AS labId, ${personal ? "NULL" : "l.name_" + filter.lang} AS labName,
       json_extract(r.input_json,'$.a.name') AS nameA, json_extract(r.input_json,'$.b.name') AS nameB,
       json_extract(r.input_json,'$.a.cas') AS casA, json_extract(r.input_json,'$.b.cas') AS casB,
       json_extract(r.input_json,'$.a.classifications') AS classA, json_extract(r.input_json,'$.b.classifications') AS classB,
@@ -61,35 +63,36 @@ function dataset(subject: Subject, filter: Filters) {
       v.created_at AS completedAt, json_extract(v.approved_result_json, '$.incompatibilities') AS findings,
       json_extract(v.approved_result_json, '$.classification') AS classification,
       json_extract(v.approved_result_json, '$.sources') AS scientificReferences,
-      CASE WHEN s.integrity_version = 2 THEN json_extract(s.calculation_json, '$.result.references') END AS estimatedReferences,
+      CASE WHEN ${supportedEstimate} THEN json_extract(s.calculation_json, '$.result.references') END AS estimatedReferences,
       json_extract(e.calculation_json, '$.result.references') AS actualReferences,
-      ${amount("s", "net", true)} AS estimate,
-      ${amount("e", "net", true)} AS realized,
-      ${amount("e", "financial.purchase", true)} AS purchase,
-      ${amount("e", "financial.replacement", true)} AS replacement,
-      ${amount("e", "financial.disposal", true)} AS disposal,
-      ${amount("e", "wasteAvoided")} AS waste,
-      ${amount("e", "wasteAvoidedKg")} AS wasteKg,
-      ${amount("s", "avoidedCo2e")} AS carbon,
-      ${amount("e", "avoidedCo2e")} AS verifiedCarbon
+      ${comparisonAmount("s", "net", true)} AS estimate,
+      ${comparisonAmount("e", "net", true)} AS realized,
+      ${comparisonAmount("e", "financial.purchase", true)} AS purchase,
+      ${comparisonAmount("e", "financial.replacement", true)} AS replacement,
+      ${comparisonAmount("e", "financial.disposal", true)} AS disposal,
+      ${comparisonAmount("s", "wasteAvoided")} AS estimatedWaste,
+      ${comparisonAmount("s", "wasteAvoidedKg")} AS estimatedWasteKg,
+      ${comparisonAmount("e", "wasteAvoided")} AS waste,
+      ${comparisonAmount("e", "wasteAvoidedKg")} AS wasteKg,
+      ${comparisonAmount("s", "avoidedCo2e")} AS carbon,
+      ${comparisonAmount("e", "avoidedCo2e")} AS verifiedCarbon
     FROM public_requests r JOIN public_request_workflow w ON w.request_id = r.id
-    ${personal ? "JOIN impact_profile_requests p ON p.request_id = r.id" : ""}
     LEFT JOIN impact_affiliations a ON a.request_id = r.id LEFT JOIN institution_labs l ON l.id = a.lab_id
     LEFT JOIN public_review_decisions v ON v.request_id = r.id AND v.run_id = w.run_id AND w.status = 'Approved' AND v.decision = 'Approved'
-    LEFT JOIN impact_events e ON w.status = 'Approved' AND e.id = (SELECT id FROM impact_events WHERE request_id = r.id ORDER BY id DESC LIMIT 1)
-    LEFT JOIN impact_events s ON w.status = 'Approved' AND s.id = (SELECT id FROM impact_events WHERE request_id = r.id AND state = 'estimated' ORDER BY id DESC LIMIT 1)
+    ${statisticalLedgerJoins}
     WHERE ${criteria.length ? criteria.join(" AND ") : "1"}
   )`;
   return { base, args };
 }
 
 const reviewed = "state IN ('verified','corrected')";
-const verified = `${reviewed} AND integrityVersion = 2`;
+const verified = "verifiedOutcome = 1";
 const activity = (kinds: string, mass = false) => `CASE WHEN ${verified} THEN (SELECT sum(
   CASE json_extract(x.value, '$.quantity.unit') ${mass ? "WHEN 'g' THEN 0.001 WHEN 'kg' THEN 1" : "WHEN 'uL' THEN 0.000001 WHEN 'mL' THEN 0.001 WHEN 'L' THEN 1"} END
   * json_extract(x.value,'$.quantity.value')) FROM json_each(activities) x WHERE json_extract(x.value,'$.kind') IN (${kinds})) END`;
 const metrics = {
   estimatedFinancial: "estimate", verifiedFinancial: `CASE WHEN ${verified} THEN realized END`,
+  estimatedAvoided: "estimatedWaste", estimatedAvoidedKg: "estimatedWasteKg",
   purchase: `CASE WHEN ${verified} THEN purchase END`, disposal: `CASE WHEN ${verified} THEN disposal END`,
   replacement: `CASE WHEN ${verified} THEN replacement END`,
   assessed: "CASE WHEN status = 'Approved' AND (litersA IS NOT NULL OR litersB IS NOT NULL) THEN coalesce(litersA,0)+coalesce(litersB,0) END",
@@ -105,7 +108,7 @@ const summation = (digits: number) => `count(*) AS assessments, count(CASE WHEN 
   count(CASE WHEN status IN ('Approved','Rejected') THEN 1 END) AS completed,
   count(CASE WHEN state IN ('pending-verification','verified','corrected','rejected','cancelled') THEN 1 END) AS reported,
   count(CASE WHEN ${verified} THEN 1 END) AS verified,
-  count(CASE WHEN ${reviewed} AND integrityVersion <> 2 THEN 1 END) AS needsRecheck,
+  count(CASE WHEN ${reviewed} AND NOT ${verified} THEN 1 END) AS needsRecheck,
   count(CASE WHEN ${verified} AND EXISTS (SELECT 1 FROM json_each(activities) WHERE json_extract(value,'$.kind') <> 'no-action') THEN 1 END) AS confirmedActions,
   count(CASE WHEN state = 'pending-verification' THEN 1 END) AS pending,
   count(CASE WHEN ${verified} AND EXISTS (SELECT 1 FROM json_each(activities) WHERE json_extract(value,'$.kind') = 'abandoned') THEN 1 END) AS prevention,
@@ -157,23 +160,54 @@ function cell(value: string | number | null) {
 function csv(rows: ImpactLog[], filter: Filters) {
   const header = filter.lang === "ar"
     ? ["العملية", "التاريخ", "المختبر", "التقييم", "التحقق", "الإجراءات", "المادة أ", "المادة ب", "تقدير " + filter.currency, "صافي موثّق " + filter.currency,
-      "النفايات المتجنبة (لتر)", "النفايات المتجنبة (كغم)", "تقدير مكافئ ثاني أكسيد الكربون (كغم)", "تقدير مكافئ ثاني أكسيد الكربون لنشاط موثّق (كغم)", "حدود البيانات"]
+      "تقدير النفايات المتجنبة (لتر)", "تقدير النفايات المتجنبة (كغم)", "النفايات المتجنبة (لتر)", "النفايات المتجنبة (كغم)", "تقدير مكافئ ثاني أكسيد الكربون (كغم)", "تقدير مكافئ ثاني أكسيد الكربون لنشاط موثّق (كغم)", "حدود البيانات"]
     : ["Operation", "Date", "Laboratory", "Assessment", "Verification", "Actions", "Material A", "Material B", "Estimated " + filter.currency,
-      "Documented net " + filter.currency, "Waste avoided (L)", "Waste avoided (kg)", "Estimated avoided kg CO2e", "Estimated avoided kg CO2e from verified activity", "Data limitations"];
+      "Documented net " + filter.currency, "Hypothetical waste avoided (L)", "Hypothetical waste avoided (kg)", "Waste avoided (L)", "Waste avoided (kg)", "Estimated avoided kg CO2e", "Estimated avoided kg CO2e from verified activity", "Data limitations"];
   const limitations = filter.lang === "ar" ? "الخانات الفارغة تعني أن القيم غير متاحة. الانبعاثات تقديرات نموذجية." :
     "Blank cells are unavailable values. Emissions are modeled estimates.";
   const lines = [header, ...rows.map((row) => [row.id, row.date, row.labName,
     (filter.lang === "ar" ? ar[statusLabel[row.status]] : undefined) ?? en[statusLabel[row.status]],
     row.reviewRequired ? (filter.lang === "ar" ? "يتطلب مراجعة جديدة" : "Requires re-review") : row.state ? labLabel(filter.lang, row.state) : null,
     row.actions.map((kind) => labLabel(filter.lang, kind)).join(" | "),
-    ...row.names, row.estimate, row.realized, row.waste, row.wasteKg, row.carbon, row.verifiedCarbon, limitations])].map((row) => row.map(cell).join(","));
+    ...row.names, row.estimate, row.realized, row.estimatedWaste, row.estimatedWasteKg, row.waste, row.wasteKg, row.carbon, row.verifiedCarbon, limitations])].map((row) => row.map(cell).join(","));
   return new Response("\uFEFF" + lines.join("\r\n") + "\r\n", { headers: {
     "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
     "Content-Disposition": 'attachment; filename="aetheris-impact.csv"',
   } });
 }
 
-export async function analytics(db: D1Database, url: URL, subject: Subject, format: "json" | "csv") {
+const log = `SELECT id, date, completedAt, status, state, verifiedOutcome, activities, nameA, nameB, labId, labName,
+  estimate, estimatedWaste, estimatedWasteKg, carbon, findings, CASE WHEN ${reviewed} AND NOT ${verified} THEN 1 ELSE 0 END AS reviewRequired,
+  realized, waste, wasteKg, verifiedCarbon FROM base`;
+
+const receiptProofs = z.strictObject({
+  receipts: z.array(z.strictObject({ id: publicRequestIdSchema, receipt: trackingTokenSchema })).min(1).max(receiptStatisticsBatchSize),
+});
+
+function toAssessment(row: LogRow): AssessmentImpact {
+  const { id, date, completedAt, status, nameA, nameB, estimate, realized, estimatedWaste, estimatedWasteKg,
+    waste, wasteKg, carbon, verifiedCarbon } = row;
+  return { id, date, completedAt, status, names: [nameA, nameB], estimate, realized, estimatedWaste, estimatedWasteKg,
+    waste, wasteKg, carbon, verifiedCarbon };
+}
+
+export async function singleAssessmentStatistics(db: D1Database, requestId: string) {
+  const { base, args } = dataset({ requestId }, filters.parse({}));
+  const row = await db.prepare(`WITH base AS ${base} ${log}`).bind(...args).first<LogRow>();
+  return row ? toAssessment(row) : null;
+}
+
+export async function receiptStatistics(request: Request, db: D1Database) {
+  const data = await body(request, receiptProofs);
+  if (data instanceof Response) return data;
+  const pairs = new Map(data.receipts.map(({ id, receipt }) => [id + ":" + receipt, { id, receipt }]));
+  const proofs = await Promise.all([...pairs.values()].map(async ({ id, receipt }) => ({ id, proof: await digest(receipt) })));
+  const { base, args } = dataset({ receipts: JSON.stringify(proofs) }, filters.parse({}));
+  const rows = await db.prepare(`WITH base AS ${base} ${log} ORDER BY date DESC, id DESC`).bind(...args).all<LogRow>();
+  return json({ assessments: rows.results.map(toAssessment) });
+}
+
+export async function analytics(db: D1Database, url: URL, subject: Scope, format: "json" | "csv") {
   const parsed = filters.safeParse(Object.fromEntries(url.searchParams));
   if (!parsed.success) return error("INVALID_FILTER", 400);
   const filter = parsed.data;
@@ -181,10 +215,6 @@ export async function analytics(db: D1Database, url: URL, subject: Subject, form
   const query = (sql: string, ...extra: string[]) => db.prepare(`WITH base AS ${base} ${sql}`).bind(...args, ...extra);
   const digits = currencyPrecision(filter.currency);
   const summary = summation(digits);
-  const log = `SELECT id, date, completedAt, status, state, activities, nameA, nameB, labId, labName, estimate, carbon, findings,
-    CASE WHEN ${reviewed} AND integrityVersion <> 2 THEN 1 ELSE 0 END AS reviewRequired,
-    CASE WHEN ${verified} THEN realized END AS realized, CASE WHEN ${verified} THEN waste END AS waste,
-    CASE WHEN ${verified} THEN wasteKg END AS wasteKg, CASE WHEN ${verified} THEN verifiedCarbon END AS verifiedCarbon FROM base`;
   if (format === "csv") {
     const rows = await query(log + " ORDER BY date DESC, id DESC LIMIT 1001").all<LogRow>();
     return rows.results.length > 1000 ? error("EXPORT_LIMIT", 422) : csv(rows.results.map(logRow), filter);

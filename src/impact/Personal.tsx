@@ -1,86 +1,107 @@
-import { useState, type FormEvent } from "react";
 import { Button } from "@mui/material";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import PageHeading from "../components/PageHeading";
-import { trackingTokenSchema } from "../domain";
+import { statusLabel } from "../reviewText";
 import { getTrackingToken } from "../services/receipts";
 import { useReceipts } from "../services/useReceipts";
-import { useLanguage } from "../text";
-import { Dashboard } from "./Dashboard";
-import { FormError, LabInput, Submit } from "./Inputs";
-import { field } from "./formData";
-import { getCredential, labApi, rememberCredential, words } from "./client";
+import { useLanguage, useText } from "../text";
+import { labApi, words } from "./client";
+import { receiptStatisticsBatchSize, type AssessmentImpact, type AssessmentImpactValues } from "./contracts";
+import { FormError } from "./Inputs";
+import { ImpactCharts, ImpactMethod, ImpactValues, MetricCards } from "./Statistics";
+import { impactSeries } from "./statisticsMetrics";
+import "./impact.css";
+
+const api = labApi("/api/impact");
+
+async function readAssessments(ids: string[], signal: AbortSignal) {
+  const receipts = ids.flatMap((id) => {
+    const receipt = getTrackingToken(id);
+    return receipt ? [{ id, receipt }] : [];
+  });
+  const assessments: AssessmentImpact[] = [];
+  for (let index = 0; index < receipts.length; index += receiptStatisticsBatchSize) {
+    const batch = await api<{ assessments: AssessmentImpact[] }>("/personal", {
+      receipts: receipts.slice(index, index + receiptStatisticsBatchSize),
+    }, signal);
+    assessments.push(...batch.assessments);
+  }
+  return assessments.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+}
+
+function summaries(assessments: AssessmentImpact[]) {
+  const coverage = Object.fromEntries(impactSeries.map(({ key }) => [key, 0])) as Record<keyof AssessmentImpactValues, number>;
+  const unavailable: AssessmentImpactValues = { estimate: null, realized: null, carbon: null, verifiedCarbon: null,
+    estimatedWaste: null, estimatedWasteKg: null, waste: null, wasteKg: null };
+  const values = { ...unavailable };
+  const periods = new Map<string, AssessmentImpactValues & { period: string }>();
+  for (const row of assessments) {
+    const period = row.date.slice(0, 7);
+    let bucket = periods.get(period);
+    if (!bucket) {
+      bucket = { ...unavailable, period };
+      periods.set(period, bucket);
+    }
+    for (const { key } of impactSeries) {
+      const value = row[key];
+      if (value === null) continue;
+      coverage[key]++;
+      values[key] = (values[key] ?? 0) + value;
+      bucket[key] = (bucket[key] ?? 0) + value;
+    }
+  }
+  return { values, coverage, series: [...periods.values()].slice(0, 120).reverse() };
+}
 
 export default function Personal() {
   const lang = useLanguage();
   const t = (en: string, ar: string) => words(lang, en, ar);
-  const { receipts } = useReceipts();
-  const client = useQueryClient();
-  const [token, setToken] = useState(() => getCredential("profile"));
-  const [version, setVersion] = useState(0);
-  const [selected, setSelected] = useState("");
-  const [notice, setNotice] = useState("");
-  const [confirm, setConfirm] = useState(false);
-  const api = labApi("/api/impact", { token });
-  function access(next: string) {
-    const persistent = rememberCredential("profile", next);
-    setNotice(next && !persistent ? t("Save the access credential so you can open the dashboard after leaving this tab.",
-      "احفظ رمز الوصول لتتمكن من فتح اللوحة بعد مغادرة علامة التبويب.") : "");
-    setToken(next);
-    setVersion((old) => old + 1);
-    setConfirm(false);
-  }
-  const create = useMutation({ mutationFn: () => api<{ token: string }>("/profile/create", {}), onSuccess: (value) => access(value.token), gcTime: 0 });
-  const link = useMutation({
-    mutationFn: () => api("/profile/link", { id: selected, receipt: getTrackingToken(selected) }),
-    onSuccess: () => {
-      setNotice(t("Receipt linked.", "تم ربط الإيصال."));
-      void client.invalidateQueries({ queryKey: ["impact-overview"] });
-    },
+  const statusText = useText();
+  const { receipts, storageUnavailable } = useReceipts();
+  const ids = receipts.map(({ id }) => id).sort();
+  const query = useQuery({
+    queryKey: ["personal-impact", ids], gcTime: 0, retry: false, enabled: ids.length > 0,
+    refetchInterval: 30_000, refetchOnWindowFocus: true,
+    queryFn: ({ signal }) => readAssessments(ids, signal),
   });
-  const revoke = useMutation({ mutationFn: () => api("/profile/revoke", {}), onSuccess: () => access("") });
-  function restore(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const credential = trackingTokenSchema.safeParse(field(new FormData(event.currentTarget), "token"));
-    if (credential.success) access(credential.data);
-    else setNotice(t("Enter a valid access credential.", "أدخل رمز وصول صالحاً."));
-  }
+  const data = query.isError ? undefined : query.data;
+  const summary = data && summaries(data);
+  const hasReceipts = ids.length > 0;
   return <div className="page">
     <PageHeading title={t("Personal impact", "الأثر الشخصي")} />
     <section className="panel impact-panel">
-      {!token ? <>
-        <p>{t("Create an optional anonymous dashboard or open an existing one with your access credential.",
-          "أنشئ لوحة شخصية مجهولة اختيارية أو افتح لوحة موجودة باستخدام رمز الوصول.")}</p>
-        <div><Button variant="contained" disabled={create.isPending} onClick={() => create.mutate()}>{t("Create private dashboard", "إنشاء لوحة خاصة")}</Button></div>
-        <form className="impact-form" onSubmit={restore}>
-          <LabInput name="token" en="Existing access credential" ar="رمز الوصول الحالي" type="password" required />
-          <Submit>{t("Open dashboard", "فتح اللوحة")}</Submit>
-        </form>
-      </> : <>
-        <details className="impact-details"><summary>{t("Access credential", "رمز الوصول")}</summary>
-          <p>{t("Anyone with this credential can see your linked dashboard. Keep it private.", "يمكن لحامل هذا الرمز رؤية اللوحة المرتبطة. احفظه بشكل خاص.")}</p>
-          <output className="impact-wrap"><bdi>{token}</bdi></output>
-        </details>
-        <label htmlFor="personal-receipt">{t("Link a receipt saved in this browser", "ربط إيصال محفوظ في هذا المتصفح")}</label>
-        <select id="personal-receipt" value={selected} onChange={(e) => setSelected(e.target.value)}>
-          <option value="">{t("Choose a receipt", "اختر إيصالاً")}</option>
-          {receipts.map(({ id, createdAt }) => <option key={id} value={id}>{createdAt.slice(0, 10)} · {id.slice(0, 8)}</option>)}
-        </select>
-        {receipts.length === 0 && <Link to="/requests">{t("View assessment receipts", "عرض إيصالات التقييم")}</Link>}
-        <div className="button-row">
-          <Button variant="contained" disabled={!selected || link.isPending} onClick={() => link.mutate()}>{t("Link receipt", "ربط الإيصال")}</Button>
-          <Button onClick={() => access("")}>{t("Close dashboard on this browser", "إغلاق اللوحة على هذا المتصفح")}</Button>
-          <Button color="error" onClick={() => setConfirm(!confirm)}>{t("Revoke access", "إلغاء الوصول")}</Button>
-        </div>
-        {confirm && <div role="group">
-          <p>{t("Revoking this credential removes dashboard links. Your individual receipts remain available.", "يؤدي إلغاء هذا الرمز إلى إزالة روابط اللوحة. تظل إيصالاتك متاحة.")}</p>
-          <Button color="error" variant="contained" disabled={revoke.isPending} onClick={() => revoke.mutate()}>{t("Confirm revocation", "تأكيد الإلغاء")}</Button>
-        </div>}
+      <p>{t("This dashboard uses analysis receipts saved in this browser.", "تستخدم هذه اللوحة إيصالات التحليل المحفوظة في هذا المتصفح.")}</p>
+      {storageUnavailable && <p role="status">{statusText("receiptStorageUnavailable")}</p>}
+      {!hasReceipts && <div>
+        <p>{t("There are no saved receipts to show here.", "لا توجد إيصالات محفوظة لعرضها هنا.")}</p>
+        <Link className="text-link" to="/requests">{t("View assessment receipts", "عرض إيصالات التقييم")}</Link>
+      </div>}
+      {hasReceipts && <div className="button-row">
+        <Button variant="outlined" disabled={query.isFetching} onClick={() => void query.refetch()}>
+          {t("Refresh statistics", "تحديث الإحصاءات")}
+        </Button>
+      </div>}
+      {hasReceipts && query.isPending && <p role="status">{t("Loading statistics…", "جارٍ تحميل الإحصاءات…")}</p>}
+      <FormError error={query.error} />
+      {data && summary && <>
+        <h2>{t("Cumulative totals", "المجاميع التراكمية")}</h2>
+        <MetricCards items={[
+          { title: t("Tracked assessments", "التقييمات المتابَعة"), value: data.length },
+          { title: t("Approved assessments", "التقييمات المعتمدة"), value: data.filter(({ status }) => status === "Approved").length },
+        ]} />
+        <ImpactValues values={summary.values} coverage={summary.coverage} />
+        <ImpactMethod />
+        <ImpactCharts series={summary.series} />
+        <h2>{t("Assessment breakdown", "تفاصيل التقييمات")}</h2>
+        {!data.length && <p>{t("No accessible assessments are available for the saved receipts.", "لا توجد تقييمات متاحة للإيصالات المحفوظة.")}</p>}
+        <div className="impact-statistics">{data.map((row) => <details className="impact-details" key={row.id}>
+          <summary><bdi>{row.names.join(" · ")}</bdi> · <bdi>{row.date.slice(0, 10)}</bdi> · {statusText(statusLabel[row.status])}</summary>
+          {row.status === "Approved" && <ImpactValues values={row} />}
+          {row.status !== "Approved" && <p>{t("Impact statistics require a current human approval.", "تتطلب إحصاءات الأثر اعتماداً بشرياً سارياً.")}</p>}
+          <Link className="text-link" to={"/requests/" + row.id + "/receipt"}>{t("Open receipt", "فتح الإيصال")}</Link>
+        </details>)}</div>
       </>}
-      {notice && <p role="status">{notice}</p>}
-      <FormError error={create.error || link.error || revoke.error} />
     </section>
-    {token && <Dashboard key={version} api={api} contextKey={"personal-" + version} personal />}
   </div>;
 }

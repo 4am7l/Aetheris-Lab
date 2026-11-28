@@ -4,7 +4,7 @@ import { trackingTokenSchema } from "../../src/domain";
 import type { Department, Laboratory, Organization } from "../../src/impact/contracts";
 import { referenceId } from "../../src/impact/model";
 import { error, json } from "../http";
-import { audit, bearer, canManage, digest, member, profile, token, withinScope, type Scope } from "./access";
+import { audit, bearer, canManage, digest, member, token, withinScope, type Scope } from "./access";
 import { body, shortText, timestamp } from "./io";
 import { receiptAuthorized } from "./ledger";
 
@@ -21,7 +21,6 @@ const invite = z.strictObject({
 const inviteToken = z.strictObject({ invitation: trackingTokenSchema });
 const revoke = z.strictObject({ id: referenceId });
 const link = z.strictObject({ id: z.uuidv4(), receipt: trackingTokenSchema, labId: referenceId.optional() });
-const profileLink = link.omit({ labId: true });
 
 export async function directory(db: D1Database, scope: Scope) {
   const tenant = scope.global ? "1" : "institution_id = ?";
@@ -143,40 +142,6 @@ export async function attachAffiliation(request: Request, db: D1Database, scope:
   if (inserted || await db.prepare("SELECT 1 FROM impact_affiliations WHERE request_id = ? AND institution_id = ? AND lab_id = ?")
     .bind(data.id, scope.institutionId, lab).first()) return json({ linked: true });
   return error("AFFILIATION_UNAVAILABLE", 409);
-}
-
-export async function profileRoute(request: Request, db: D1Database, action: "create" | "link" | "revoke") {
-  if (action === "create") {
-    const parsed = await body(request, z.strictObject({}), 128);
-    if (parsed instanceof Response) return parsed;
-    const credential = token();
-    await db.prepare("INSERT INTO impact_profiles(id, token_hash, created_at) VALUES (?, ?, ?)")
-      .bind(crypto.randomUUID(), await digest("profile:" + credential), timestamp()).run();
-    return json({ token: credential }, 201);
-  }
-  const account = await profile(db, request);
-  if (!account) return error("UNAUTHORIZED", 401);
-  if (action === "revoke") {
-    const result = await body(request, z.strictObject({}), 128);
-    if (result instanceof Response) return result;
-    await db.batch([
-      db.prepare("UPDATE impact_profiles SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").bind(timestamp(), account.id),
-      db.prepare("DELETE FROM impact_profile_requests WHERE profile_id = ?").bind(account.id),
-    ]);
-    return json({ revoked: true });
-  }
-  const data = await body(request, profileLink, 1024);
-  if (data instanceof Response) return data;
-  if (!await receiptAuthorized(db, data.id, data.receipt)) return error("NOT_FOUND", 404);
-  const receiptHash = await digest(data.receipt);
-  const saved = await db.prepare(`INSERT INTO impact_profile_requests(request_id, profile_id, linked_at)
-      SELECT t.request_id, p.id, ? FROM public_request_tokens t CROSS JOIN impact_profiles p
-      WHERE t.request_id = ? AND t.token_sha256 = ? AND p.id = ? AND p.revoked_at IS NULL
-      ON CONFLICT(request_id) DO NOTHING RETURNING request_id`).bind(timestamp(), data.id, receiptHash, account.id).first();
-  if (saved || await db.prepare("SELECT 1 FROM impact_profile_requests WHERE profile_id = ? AND request_id = ?").bind(account.id, data.id).first()) {
-    return json({ linked: true });
-  }
-  return error("LINK_UNAVAILABLE", 409);
 }
 
 export function authenticateMember(request: Request, db: D1Database) {

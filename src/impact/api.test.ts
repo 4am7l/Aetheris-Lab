@@ -6,7 +6,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import worker, { type Env } from "../../worker";
 import { testDatabase } from "../../tests/d1";
 import { blankSolution, type CreatedReceipt } from "../domain";
-import type { CatalogChemical, ImpactOverview, OperationImpact } from "./contracts";
+import { member, platform } from "../../worker/impact/access";
+import { evaluateScenario, operationImpact } from "../../worker/impact/ledger";
+import { scenarioSchema } from "./model";
+import type { AssessmentImpact, AssessmentStatistics, CatalogChemical, ImpactOverview, OperationImpact } from "./contracts";
 
 const base = "/api/impact";
 const ws = base + "/workspace";
@@ -117,8 +120,23 @@ function approve(id: string, classification = "Insufficient information") {
     sources: [{ title: "Reviewed reference", url: "https://pubchem.ncbi.nlm.nih.gov/compound/962" }], reviewedAt: now,
   }), now);
 }
+// Exercise the original writer directly to reproduce valid ledger history without re-enabling its HTTP routes.
+async function historical(path: string, data?: unknown, token?: string, administrator = false) {
+  const [, id, action] = /\/operations\/([^/]+)(?:\/([^/]+))?$/.exec(path)!;
+  const mode = (action ?? "view") as Parameters<typeof operationImpact>[3];
+  const scope = administrator ? platform("fixture") : path.startsWith(ws) ? await member(env.DB, token) : undefined;
+  const request = new Request(origin + path, { method: data === undefined ? "GET" : "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+  return operationImpact(request, env.DB, id, mode, scope ?? undefined);
+}
+const historicalAdmin = (path: string, data: unknown) => historical(platformPath + path, data, undefined, true);
+const personal = (...receipts: { id: string; trackingToken: string }[]) => call(base + "/personal", {
+  receipts: receipts.map(({ id, trackingToken }) => ({ id, receipt: trackingToken })),
+}).then((response) => ok<{ assessments: AssessmentImpact[] }>(response));
 const changes = (expectedId = 0) => ({ key: randomUUID(), expectedId });
-const report = (receipt: CreatedReceipt, payload: unknown) => call(base + "/operations/" + receipt.id + "/report", payload, receipt.trackingToken);
+const report = (receipt: CreatedReceipt, payload: unknown) => historical(base + "/operations/" + receipt.id + "/report", payload, receipt.trackingToken);
 const operation = (receipt: CreatedReceipt) => base + "/operations/" + receipt.id;
 const caseFor = (x: number, y: number, record = "fixture") => ({
   baseline: [{ amount: x, evidence: record + " baseline" }], actual: [{ amount: y, evidence: record + " actual" }],
@@ -128,7 +146,7 @@ const financial = { purchase: caseFor(10, 0, "purchase"), disposal: caseFor(5, 0
 const action = (kind: string, q?: number, materialId?: string) => ({ kind, date: new Date().toISOString().slice(0, 10),
   quantity: q === undefined ? undefined : { value: q, unit: "mL" }, materialId, side: materialId ? "A" : undefined });
 async function verify(receipt: CreatedReceipt, impact: OperationImpact, scenario?: unknown, extra = {}) {
-  return call(ws + "/operations/" + receipt.id + "/review", { ...changes(impact.current?.id), decision: "verify", reason: "Qualified review of activity records",
+  return historical(ws + "/operations/" + receipt.id + "/review", { ...changes(impact.current?.id), decision: "verify", reason: "Qualified review of activity records",
     evidenceReference: impact.current?.activities.some(({ kind }) => kind !== "no-action") ? "operation/" + receipt.id : undefined,
     ...(scenario ? { scenario, realizedEvidence: "Invoice and activity evidence" } : {}), ...extra }, reviewerToken);
 }
@@ -139,17 +157,16 @@ async function formulation(overrides = {}) {
     source: "https://pubchem.ncbi.nlm.nih.gov/compound/5234", verified: true, ...overrides,
   }, tenantToken), 201)).id;
 }
-const outcome = (token = reviewerToken) => call(ws + "/overview", undefined, token).then((response) => ok<ImpactOverview>(response));
+const outcome = () => admin("/overview").then((response) => ok<ImpactOverview>(response));
 
 describe("sustainability reference and tenant access", () => {
-  it("enforces the stricter rate budget for profile creation, redemption and original PDF upload", async () => {
+  it("enforces the stricter rate budget for redemption and original PDF upload", async () => {
     const calls: string[] = [];
     env.SUBMISSION_LIMIT = { limit: ({ key }) => { calls.push(key); return Promise.resolve({ success: false }); } };
-    expect((await call(base + "/profile/create", {})).status).toBe(429);
     expect((await call(ws + "/redeem", {})).status).toBe(429);
     expect((await call(ws + "/sds", {}, secondManagerToken)).status).toBe(429);
     expect((await call(ws + "/sds", undefined, secondManagerToken)).status).toBe(200);
-    expect(new Set(calls).size).toBe(3);
+    expect(new Set(calls).size).toBe(2);
     expect(calls.join(" ")).not.toContain(secondManagerToken);
   });
 
@@ -164,7 +181,7 @@ describe("sustainability reference and tenant access", () => {
     };
     expect((await call(base + "/chemicals")).status).toBe(200);
     expect((await call(base + "/chemicals")).status).toBe(429);
-    expect((await call(ws + "/overview", undefined, viewerToken)).status).toBe(200);
+    expect((await call(ws + "/directory", undefined, viewerToken)).status).toBe(200);
     const receipt = await submit();
     expect((await call("/api/requests/" + receipt.id, undefined, receipt.trackingToken)).status).toBe(200);
   });
@@ -208,9 +225,9 @@ describe("sustainability reference and tenant access", () => {
     await affiliate(receipt, session.token);
     expect((await call(ws + "/affiliate", { id: receipt.id, receipt: receipt.trackingToken, labId: "lab-b" }, session.token)).status).toBe(403);
     expect((await call(ws + "/operations/" + receipt.id, undefined, otherToken)).status).toBe(404);
-    const view = await ok<ImpactOverview>(await call(ws + "/overview", undefined, session.token));
-    expect(view.totals.assessments).toBe(1);
-    expect((await ok<ImpactOverview>(await call(ws + "/overview", undefined, otherToken))).totals.assessments).toBe(0);
+    expect((await call(ws + "/overview", undefined, session.token)).status).toBe(403);
+    expect((await call(ws + "/overview", undefined, otherToken)).status).toBe(403);
+    expect((await outcome()).totals.assessments).toBe(1);
     await ok(await admin("/memberships/revoke", { id: invitation.id }));
     expect((await call(ws + "/overview", undefined, session.token)).status).toBe(401);
   });
@@ -230,16 +247,15 @@ describe("sustainability reference and tenant access", () => {
     approve(second.id);
     expect((await call(ws + "/operations/" + first.id, undefined, sibling.token)).status).toBe(404);
     expect((await call(ws + "/operations/" + first.id + "/review", {}, sibling.token)).status).toBe(404);
-    expect((await call(ws + "/operations/" + second.id + "/estimate", {}, sibling.token)).status).toBe(403);
+    expect((await call(ws + "/operations/" + second.id + "/estimate", {}, sibling.token)).status).toBe(404);
     expect((await call(ws + "/memberships", { institutionId: "uni-a", role: "institution-admin" }, sibling.token)).status).toBe(403);
     expect((await call(ws + "/audit", undefined, sibling.token)).status).toBe(403);
     expect((await call(ws + "/affiliate", { id: first.id, receipt: first.trackingToken, labId: "lab-a" }, sibling.token)).status).toBe(403);
-    const foreignCursor = await ok<ImpactOverview>(await call(ws + "/overview?after=" + first.id, undefined, sibling.token));
-    const unknownCursor = await ok<ImpactOverview>(await call(ws + "/overview?after=" + randomUUID(), undefined, sibling.token));
-    expect(foreignCursor.log).toEqual(unknownCursor.log);
-    expect(foreignCursor.log).toEqual([]);
-    expect((await ok<ImpactOverview>(await call(ws + "/overview?department=dept-a2", undefined, viewerToken))).totals.assessments).toBe(0);
-    expect((await ok<ImpactOverview>(await call(ws + "/overview?department=dept-a2", undefined, tenantToken))).log.map(({ id }) => id)).toEqual([second.id]);
+    expect((await call(ws + "/overview?after=" + first.id, undefined, sibling.token)).status).toBe(403);
+    expect((await call(ws + "/overview.csv", undefined, tenantToken)).status).toBe(403);
+    const unknownCursor = await ok<ImpactOverview>(await admin("/overview?after=" + randomUUID()));
+    expect(unknownCursor.log).toEqual([]);
+    expect((await ok<ImpactOverview>(await admin("/overview?department=dept-a2"))).log.map(({ id }) => id)).toEqual([second.id]);
     expect(JSON.stringify(await ok(await call(ws + "/directory", undefined, sibling.token)))).not.toContain("dept-a\"");
     const wrongOrigin = await worker.fetch(new Request(origin + ws + "/overview", {
       headers: { Origin: "https://other.example.test", Authorization: "Bearer " + sibling.token },
@@ -265,28 +281,101 @@ describe("sustainability reference and tenant access", () => {
     expect(await (await call(ws + "/chemicals/" + material.id, undefined, otherToken)).text()).not.toContain("private test invoice");
   });
 
-  it("gates approval, links older receipts to a revocable private profile and uses no identifier as a credential", async () => {
+  it("automatically scopes personal statistics to valid tracking proofs, deduplicates receipts and follows approval and deletion", async () => {
     const receipt = await submit();
-    const out = await ok<{ token: string }>(await call(base + "/profile/create", {}), 201);
-    expect(out.token).toMatch(/^[a-f0-9]{64}$/);
-    expect(JSON.stringify(db.prepare("SELECT * FROM impact_profiles").get())).not.toContain(out.token);
-    expect((await call(base + "/personal", undefined, receipt.trackingToken)).status).toBe(401);
-    expect((await call(base + "/profile/link", { id: receipt.id, receipt: "0".repeat(64) }, out.token)).status).toBe(404);
-    await ok(await call(base + "/profile/link", { id: receipt.id, receipt: receipt.trackingToken }, out.token));
+    const other = await submit("Another person's assessment");
+    approve(other.id);
+    const badProof = { ...other, trackingToken: receipt.trackingToken };
+    expect((await call(base + "/personal", undefined, receipt.trackingToken)).status).toBe(405);
+    expect((await call(base + "/personal", { receipts: [{ id: receipt.id, receipt: receipt.id }] })).status).toBe(400);
+    expect((await call(base + "/personal", { receipts: Array(101).fill({ id: receipt.id, receipt: receipt.trackingToken }) })).status).toBe(400);
+    const waiting = await personal(receipt, receipt, badProof);
+    expect(waiting.assessments).toMatchObject([{ id: receipt.id, status: "Submitted", estimate: null, realized: null }]);
     expect((await call(operation(receipt), undefined, receipt.trackingToken)).status).toBe(404);
-    expect((await report(receipt, { ...changes(), activities: [action("no-action")] })).status).toBe(404);
-    approve(receipt.id);
+    approve(receipt.id, "Incompatible");
     expect((await call(operation(receipt) + "?token=" + receipt.trackingToken)).status).toBe(404);
-    const summary = await ok<OperationImpact>(await call(operation(receipt), undefined, receipt.trackingToken));
+    expect((await call(operation(other), undefined, receipt.trackingToken)).status).toBe(404);
+    const own = (await personal(receipt, receipt, badProof)).assessments;
+    expect(own).toMatchObject([{ id: receipt.id, status: "Approved", estimate: null, realized: null, carbon: null, waste: null }]);
+    const response = await call(operation(receipt), undefined, receipt.trackingToken);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const summary = await ok<AssessmentStatistics>(response);
     expect(summary.assessed).toMatchObject({ liters: 0.75, kilograms: null });
-    expect(summary.estimate).toBeNull();
-    await ok(await call(base + "/profile/revoke", {}, out.token));
-    expect((await call(base + "/personal", undefined, out.token)).status).toBe(401);
-    expect((await call(operation(receipt), undefined, receipt.trackingToken)).status).toBe(200);
+    expect(JSON.stringify(summary)).not.toContain(receipt.trackingToken);
+    expect((await outcome()).totals).toMatchObject({ approved: 2, incompatibilities: 1, prevention: 0, verified: 0 });
+    await ok(await call("/api/admin/requests/manage", { action: "delete", ids: [receipt.id] }, undefined, true));
+    expect(await personal(receipt, badProof)).toEqual({ assessments: [] });
+    expect((await outcome()).totals.approved).toBe(1);
+  });
+
+  it("retires public, affiliated and authenticated admin savings writes", async () => {
+    const receipt = await submit();
+    await affiliate(receipt);
+    approve(receipt.id);
+    for (const suffix of ["/report", "/withdraw", "/estimate", "/review", "/guide-match"]) {
+      expect((await call(operation(receipt) + suffix, {}, receipt.trackingToken)).status).toBe(404);
+      expect((await call(ws + "/operations/" + receipt.id + suffix, {}, reviewerToken)).status).toBe(404);
+      expect((await admin("/operations/" + receipt.id + suffix, {})).status).toBe(404);
+    }
+    for (const suffix of ["/profile/create", "/profile/link", "/profile/revoke", "/calculator"]) {
+      expect((await call(base + suffix, {}, receipt.trackingToken)).status).toBe(404);
+    }
+    expect((await admin("/calculator", {})).status).toBe(404);
+    expect(db.prepare("SELECT count(*) AS count FROM impact_events").get()?.count).toBe(0);
+    expect(db.prepare("SELECT count(*) AS count FROM impact_profiles").get()?.count).toBe(0);
   });
 });
 
 describe("reviewed calculations and outcomes", () => {
+  it("shows supported hypothetical and verified comparisons separately and removes credit when approval becomes inactive", async () => {
+    const receipt = await submit();
+    approve(receipt.id);
+    const scenario = { ...scenarioMeta, currency: "JOD", financial,
+      wasteBaseline: { value: 0.2, unit: "L" }, wasteActual: { value: 0.1, unit: "L" } };
+    const estimate = await ok<OperationImpact>(await historicalAdmin("/operations/" + receipt.id + "/estimate", { ...changes(), scenario }));
+    const estimateId = estimate.current!.id;
+    db.prepare(`INSERT INTO impact_events(request_id, state, actor, created_at, calculation_json, integrity_version)
+      SELECT request_id, state, actor, ?, json_set(calculation_json, '$.result.net.difference', 100), 2
+      FROM impact_events WHERE id = ?`).run(actualDate, estimateId);
+    let read = (await personal(receipt)).assessments[0];
+    expect(read).toMatchObject({ estimate: -7, estimatedWaste: 0.1, realized: null, waste: null });
+    const current = db.prepare("SELECT max(id) AS id FROM impact_events WHERE request_id = ?").get(receipt.id)!.id as number;
+    const pending = await ok<OperationImpact>(await report(receipt, { ...changes(current), activities: [action("preserved", 150)] }));
+    await ok(await historicalAdmin("/operations/" + receipt.id + "/review", {
+      ...changes(pending.current!.id), decision: "verify", reason: "Checked evidence", scenario,
+      evidenceReference: "documented-context-42", realizedEvidence: "Reviewed transaction and material measurements",
+    }));
+    read = (await personal(receipt, receipt)).assessments[0];
+    expect(read).toMatchObject({ estimate: -7, realized: -7, estimatedWaste: 0.1, waste: 0.1, wasteKg: null });
+    expect(await ok(await admin("/operations/" + receipt.id))).toMatchObject(read);
+    expect((await outcome()).totals).toMatchObject({ assessments: 1, verified: 1, estimatedAvoided: { value: 0.1, covered: 1 },
+      avoided: { value: 0.1, covered: 1 }, estimatedFinancial: { value: -7, covered: 1 }, verifiedFinancial: { value: -7, covered: 1 } });
+    db.prepare("UPDATE public_request_workflow SET status = 'Rejected' WHERE request_id = ?").run(receipt.id);
+    expect((await call(operation(receipt), undefined, receipt.trackingToken)).status).toBe(404);
+    expect((await personal(receipt)).assessments[0]).toMatchObject({ status: "Rejected", estimate: null, realized: null, waste: null });
+    expect((await outcome()).totals).toMatchObject({ approved: 0, verified: 0, estimatedAvoided: { value: null, covered: 0 },
+      avoided: { value: null, covered: 0 } });
+    expect(db.prepare("SELECT count(*) AS entries FROM impact_events WHERE request_id = ?").get(receipt.id)?.entries).toBeGreaterThan(3);
+  });
+
+  it("excludes ambiguous historical proof reused across separate institutional ledgers", async () => {
+    const receipts = [await submit("First claim"), await submit("Second claim")];
+    const scopes = [reviewerToken, otherToken];
+    for (const [index, receipt] of receipts.entries()) {
+      await affiliate(receipt, scopes[index]);
+      approve(receipt.id);
+      const pending = await ok<OperationImpact>(await report(receipt, { ...changes(), activities: [action("preserved", 100)] }));
+      await ok(await historical(ws + "/operations/" + receipt.id + "/review", {
+        ...changes(pending.current!.id), decision: "verify", reason: "Previous qualified review",
+        evidenceReference: "shared historic specimen",
+      }, scopes[index]));
+    }
+    const review = await outcome();
+    expect(review.totals).toMatchObject({ verified: 0, needsRecheck: 2, preserved: { value: null, covered: 0 } });
+    expect(review.log.map(({ reviewRequired }) => reviewRequired)).toEqual([true, true]);
+    expect((await personal(...receipts)).assessments).toHaveLength(2);
+  });
+
   it("caps measured actions by assessed side and dimension, and allows separate segregation", async () => {
     const receipt = await submit();
     await affiliate(receipt);
@@ -395,7 +484,7 @@ describe("reviewed calculations and outcomes", () => {
     expect(await (await verify(receipt, pending, scenario(unsupported.id))).json()).toEqual({ error: "SCENARIO_EVIDENCE_UNAVAILABLE" });
     await ok(await verify(receipt, pending, scenario(supported.id)));
     expect((await outcome()).totals).toMatchObject({ verifiedCarbon: { value: 0.75, covered: 1 }, carbon: { value: null, covered: 0 }, prevention: 0 });
-    const csv = await call(ws + "/overview.csv", undefined, reviewerToken);
+    const csv = await admin("/overview.csv");
     const data = await csv.text();
     expect(data).toContain('"Estimated avoided kg CO2e from verified activity"');
     expect(data).toContain('"0.75","Blank cells are unavailable values. Emissions are modeled estimates."');
@@ -417,7 +506,7 @@ describe("reviewed calculations and outcomes", () => {
     expect(await replies[loser].json()).toEqual({ error: "DUPLICATE_IMPACT_EVIDENCE" });
     const approved = await replies[winner].json() as OperationImpact;
     expect((await outcome()).totals).toMatchObject({ verified: 1, pending: 1, preserved: { value: 0.1, covered: 1 } });
-    await ok(await call(ws + "/operations/" + records[winner].receipt.id + "/review",
+    await ok(await historical(ws + "/operations/" + records[winner].receipt.id + "/review",
       { ...changes(approved.current?.id), decision: "cancel", reason: "Evidence withdrawn" }, reviewerToken));
     expect((await outcome()).totals).toMatchObject({ verified: 0, pending: 1, preserved: { value: null, covered: 0 } });
     expect((await verify(records[loser].receipt, records[loser].pending, undefined, { evidenceReference: "register 88" })).status).toBe(409);
@@ -428,7 +517,7 @@ describe("reviewed calculations and outcomes", () => {
     await affiliate(receipt);
     approve(receipt.id, "Incompatible");
     const scenario = { ...scenarioMeta, beneficiary: "institution", financial };
-    const estimate = await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken));
+    const estimate = await ok<OperationImpact>(await historical(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken));
     expect(estimate.estimate?.net.difference).toBe(-7);
     const input = { ...changes(estimate.current?.id), activities: [action("segregation", 250), action("preserved", 250), action("abandoned")] };
     const replies = await Promise.all([report(receipt, input), report(receipt, input)]);
@@ -436,30 +525,30 @@ describe("reviewed calculations and outcomes", () => {
     expect(states[0].current).toEqual(states[1].current);
     expect(states[0].events.map((e) => e.state)).toEqual(["pending-verification", "action-reported", "estimated"]);
     expect((await report(receipt, { ...input, activities: [action("no-action")] })).status).toBe(409);
-    expect((await call(ws + "/operations/" + receipt.id + "/review", { ...changes(states[0].current?.id), decision: "verify", reason: "Viewer" }, viewerToken)).status).toBe(403);
+    expect((await historical(ws + "/operations/" + receipt.id + "/review", { ...changes(states[0].current?.id), decision: "verify", reason: "Viewer" }, viewerToken)).status).toBe(403);
     expect((await verify(receipt, states[0], { ...scenario, wasteBaseline: { value: 1, unit: "L" }, wasteActual: { value: 0, unit: "L" } })).status).toBe(422);
     const reviews = await Promise.all([verify(receipt, states[0], scenario), verify(receipt, states[0], scenario)]);
     expect(reviews.map((x) => x.status).sort()).toEqual([200, 409]);
     const saved = await reviews.find((x) => x.status === 200)!.json() as OperationImpact;
-    const overview = await ok<ImpactOverview>(await call(ws + "/overview?period=quarter&action=segregation&status=verified", undefined, reviewerToken));
+    const overview = await ok<ImpactOverview>(await admin("/overview?period=quarter&action=segregation&status=verified"));
     expect(overview.totals).toMatchObject({ approved: 1, verified: 1, prevention: 1, segregated: { value: 0.25, covered: 1 },
       avoided: { value: null, covered: 0 }, estimatedFinancial: { value: -7, covered: 1 }, verifiedFinancial: { value: -7, covered: 1 } });
     expect(overview.series).toHaveLength(1);
     expect(overview.chemicals.length).toBeGreaterThan(0);
-    const csv = await call(ws + "/overview.csv?lang=ar", undefined, reviewerToken);
+    const csv = await admin("/overview.csv?lang=ar");
     expect(csv.headers.get("Content-Type")).toContain("text/csv");
     const csvText = await csv.text();
     expect(csvText).toContain("العملية");
     expect(csvText).toContain("'=1+1");
-    const correction = await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/review", {
+    const correction = await ok<OperationImpact>(await historical(ws + "/operations/" + receipt.id + "/review", {
       ...changes(saved.current?.id), decision: "correct", reason: "Corrected quantity", activities: [action("segregation", 100)],
       evidenceReference: "operation/" + receipt.id,
     }, reviewerToken));
     expect(correction.current?.state).toBe("corrected");
-    const after = await ok<ImpactOverview>(await call(ws + "/overview", undefined, reviewerToken));
+    const after = await ok<ImpactOverview>(await admin("/overview"));
     expect(after.totals).toMatchObject({ verified: 1, prevention: 0, segregated: { value: 0.1, covered: 1 }, verifiedFinancial: { value: null, covered: 0 } });
-    await ok(await call(ws + "/operations/" + receipt.id + "/review", { ...changes(correction.current?.id), decision: "cancel", reason: "Withdrawn evidence" }, reviewerToken));
-    const cancelled = await ok<ImpactOverview>(await call(ws + "/overview", undefined, reviewerToken));
+    await ok(await historical(ws + "/operations/" + receipt.id + "/review", { ...changes(correction.current?.id), decision: "cancel", reason: "Withdrawn evidence" }, reviewerToken));
+    const cancelled = await ok<ImpactOverview>(await admin("/overview"));
     expect(cancelled.totals).toMatchObject({ verified: 0, segregated: { value: null, covered: 0 } });
     expect(() => db.prepare("UPDATE impact_events SET reason = 'rewrite' WHERE id = ?").run(saved.current!.id)).toThrow(/append-only/);
     db.prepare("INSERT INTO public_request_management_events(request_id,action,actor,created_at) VALUES(?,'delete','fixture',?)").run(receipt.id, actualDate);
@@ -481,14 +570,14 @@ describe("reviewed calculations and outcomes", () => {
     expect(rejection.current?.state).toBe("rejected");
     expect((await outcome()).totals).toMatchObject({ pending: 0, verified: 0, confirmedActions: 0 });
     const third = await ok<OperationImpact>(await report(receipt, { ...changes(rejection.current?.id), activities: [action("no-action")] }));
-    const cancelled = await ok<OperationImpact>(await call(operation(receipt) + "/withdraw", changes(third.current?.id), receipt.trackingToken));
+    const cancelled = await ok<OperationImpact>(await historical(operation(receipt) + "/withdraw", changes(third.current?.id), receipt.trackingToken));
     expect(cancelled.current?.state).toBe("cancelled");
     expect((await outcome()).totals).toMatchObject({ pending: 0, verified: 0, confirmedActions: 0 });
     const fourth = await ok<OperationImpact>(await report(receipt, { ...changes(cancelled.current?.id), activities: [action("no-action")] }));
     const confirmed = await ok<OperationImpact>(await verify(receipt, fourth));
     expect(confirmed.current?.state).toBe("verified");
-    const result = await ok<ImpactOverview>(await call(ws + "/overview", undefined, reviewerToken));
-    expect(result.totals).toMatchObject({ verified: 1, confirmedActions: 0, prevention: 0, verifiedFinancial: { value: null, covered: 0 }, avoided: { value: null, covered: 0 } });
+    const result = await ok<ImpactOverview>(await admin("/overview"));
+    expect(result.totals).toMatchObject({ verified: 0, confirmedActions: 0, prevention: 0, verifiedFinancial: { value: null, covered: 0 }, avoided: { value: null, covered: 0 } });
     expect(db.prepare("SELECT decision FROM public_review_decisions WHERE request_id=?").get(receipt.id)?.decision).toBe("Approved");
   });
 
@@ -507,17 +596,17 @@ describe("reviewed calculations and outcomes", () => {
     const scenario = { ...scenarioMeta, beneficiary: "institution", financial: {
       ...financial, purchase: { baseline: [{ materialId: id, versionId: version.id, quantity: { value: 0.25, unit: "L" } }], actual: caseFor(0, 0).actual },
     } };
-    expect((await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken))).estimate?.net.difference).toBe(-14.5);
+    expect((await ok<OperationImpact>(await historical(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken))).estimate?.net.difference).toBe(-14.5);
     await ok(await call(ws + "/versions/price", { ...price, supersedes: version.id, value: 30, invoice: "invoice-v2" }, tenantToken), 201);
-    const fetched = await ok<OperationImpact>(await call(operation(receipt), undefined, receipt.trackingToken));
-    expect(fetched.estimate?.net.difference).toBe(-14.5);
+    const fetched = await ok<AssessmentStatistics>(await call(operation(receipt), undefined, receipt.trackingToken));
+    expect(fetched.estimate).toBe(-14.5);
     expect(JSON.stringify(fetched)).not.toContain("invoice-v1");
     expect(db.prepare("SELECT count(*) AS n FROM chemical_price_versions WHERE chemical_id = ?").get(id)?.n).toBe(2);
-    const provisional = await ok<OperationImpact["estimate"]>(await call(base + "/calculator", {
+    const provisional = await evaluateScenario(env.DB, scenarioSchema.parse({
       ...scenarioMeta, financial: { purchase: { baseline: [{ materialId: "reference-ethanol", versionId: "reference-ethanol-combined",
         quantity: { value: 1, unit: "L" } }], actual: caseFor(0, 0).actual } },
-    }));
-    expect(provisional?.financial.purchase.difference).toBeNull();
+    }), { institutionId: null, labId: null, geography: null }, actualDate);
+    expect(provisional.result.financial.purchase.difference).toBeNull();
   });
 });
 
@@ -559,7 +648,7 @@ describe("fixed source reference rates", () => {
       inputEstimate: { volume: 0.1, combinedCost: 4.5, co2e: 0.15 }, actionEstimate: null }]);
     const pending = await ok<OperationImpact>(await report(receipt, { ...changes(), activities: [{ ...action("segregation", 100), side: "A" }] }));
     expect(pending.fixedGuide[0].actionEstimate).toBeNull();
-    const reviewed = await ok<OperationImpact>(await admin("/operations/" + receipt.id + "/review",
+    const reviewed = await ok<OperationImpact>(await historicalAdmin("/operations/" + receipt.id + "/review",
       { ...changes(pending.current?.id), decision: "verify", reason: "Reviewed segregation record", evidenceReference: "guide/synthetic-20" }));
     expect(reviewed.fixedGuide[0].actionEstimate).toEqual({ volume: 0.1, combinedCost: 4.5, co2e: 0.15 });
     expect(reviewed.current?.calculation).toBeNull();
@@ -577,16 +666,16 @@ describe("fixed source reference rates", () => {
     const data = { side: "A", expectedId: 0, applicable: true, reason: "Reviewed labelled synthetic formulation and guide row" };
     expect((await call(ws + path, data, reviewerToken)).status).toBe(404);
     expect((await call(base + path, data, receipt.trackingToken)).status).toBe(404);
-    const [first, second] = await Promise.all([admin(path, data), admin(path, data)]);
+    const [first, second] = await Promise.all([historicalAdmin(path, data), historicalAdmin(path, data)]);
     expect([first.status, second.status].sort()).toEqual([200, 409]);
     const updated = await read();
     expect(updated.fixedGuide[0]).toMatchObject({ status: "applied", inputEstimate: { volume: 0.25, combinedCost: 6.25, co2e: 0.225 } });
     const pending = await ok<OperationImpact>(await report(receipt, { ...changes(),
       activities: [{ ...action("preserved", 200), side: "A" }, { ...action("segregation", 250), side: "A" }] }));
-    const verified = await ok<OperationImpact>(await admin("/operations/" + receipt.id + "/review", { ...changes(pending.current?.id),
+    const verified = await ok<OperationImpact>(await historicalAdmin("/operations/" + receipt.id + "/review", { ...changes(pending.current?.id),
       decision: "verify", reason: "Reviewed documented materials", evidenceReference: "guide/synthetic-15" }));
     expect(verified.fixedGuide[0].actionEstimate).toEqual({ volume: 0.25, combinedCost: 6.25, co2e: 0.225 });
-    await ok(await admin(path, { ...data, expectedId: updated.fixedGuide[0].decisionId, applicable: false }));
+    await ok(await historicalAdmin(path, { ...data, expectedId: updated.fixedGuide[0].decisionId, applicable: false }));
     expect((await read()).fixedGuide[0]).toMatchObject({ status: "not-applicable", inputEstimate: null, actionEstimate: null });
     await ok(await call("/api/admin/requests/manage", { action: "delete", ids: [receipt.id] }, undefined, true));
     expect(db.prepare("SELECT count(*) AS n FROM assessment_guide_reviews").get()?.n).toBe(0);
@@ -603,7 +692,7 @@ describe("fixed source reference rates", () => {
       approve(receipt.id);
       const outcome = await ok<OperationImpact>(await call(operation(receipt), undefined, receipt.trackingToken));
       expect(outcome.fixedGuide[0]).toMatchObject({ status, inputEstimate: null, actionEstimate: null });
-      expect((await admin("/operations/" + receipt.id + "/guide-match", {
+      expect((await historicalAdmin("/operations/" + receipt.id + "/guide-match", {
         side: "A", expectedId: 0, applicable: true, reason: "Attempted override of missing or contradictory evidence",
       })).status).toBe(422);
     }
@@ -652,7 +741,7 @@ describe("scoped laboratory tools", () => {
     const manual = (kind: string, value: number) => call(root + "/movement", { key: randomUUID(), kind,
       quantity: { value, unit: "L" }, reason: "Stock record" }, tenantToken);
     await ok(await manual("consumed", 0.2), 201);
-    const corrected = await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/review", {
+    const corrected = await ok<OperationImpact>(await historical(ws + "/operations/" + receipt.id + "/review", {
       ...changes(verified.current?.id), decision: "correct", reason: "Correct recorded return",
       activities: [action("returned", 100, materialId)], evidenceReference: "operation/" + receipt.id,
     }, reviewerToken));
@@ -673,8 +762,8 @@ describe("scoped laboratory tools", () => {
     expect((await stock()).reconciliations).toEqual([]);
     const cancellation = { ...changes(corrected.current?.id), decision: "cancel", reason: "Withdrawn evidence" };
     const reviewPath = ws + "/operations/" + receipt.id + "/review";
-    await ok(await call(reviewPath, cancellation, reviewerToken));
-    await ok(await call(reviewPath, cancellation, reviewerToken));
+    await ok(await historical(reviewPath, cancellation, reviewerToken));
+    await ok(await historical(reviewPath, cancellation, reviewerToken));
     const final = await stock();
     expect(final.item.quantity).toBeCloseTo(0.05);
     expect(final.movements.filter(({ kind }) => kind === "adjustment")).toHaveLength(2);
@@ -779,8 +868,8 @@ describe("migration and rollback compatibility", () => {
     await ok(await manage("delete", queued.id));
     expect((await call("/api/requests/" + queued.id, undefined, queued.trackingToken)).status).toBe(404);
     expect(db.prepare("SELECT object_key FROM public_request_image_deletions").get()?.object_key).toBe(storageKey);
-    const impact = await ok<OperationImpact>(await call(operation(approved), undefined, approved.trackingToken));
-    expect(impact).toMatchObject({ current: null, estimate: null, assessed: { liters: 0.75, kilograms: null } });
+    const impact = await ok<AssessmentStatistics>(await call(operation(approved), undefined, approved.trackingToken));
+    expect(impact).toMatchObject({ realized: null, estimate: null, assessed: { liters: 0.75, kilograms: null } });
   });
 
   it("preserves 0009-era snapshots byte-for-byte and excludes them from current totals until re-reviewed", async () => {
@@ -788,19 +877,19 @@ describe("migration and rollback compatibility", () => {
     await affiliate(receipt);
     approve(receipt.id);
     const scenario = { ...scenarioMeta, beneficiary: "institution", financial };
-    const estimate = await ok<OperationImpact>(await call(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken));
-    const historical = JSON.stringify({ result: { ...estimate.estimate, formulaVersion: "baseline-actual/1" } });
+    const estimate = await ok<OperationImpact>(await historical(ws + "/operations/" + receipt.id + "/estimate", { ...changes(), scenario }, reviewerToken));
+    const snapshot = JSON.stringify({ result: { ...estimate.estimate, formulaVersion: "baseline-actual/1" } });
     const { lastInsertRowid } = db.prepare(`INSERT INTO impact_events(request_id, state, actor, created_at, activities_json, calculation_json)
-      VALUES (?, 'verified', 'legacy reviewer', ?, ?, ?)`).run(receipt.id, new Date().toISOString(), JSON.stringify([action("preserved", 100)]), historical);
-    const current = await ok<OperationImpact>(await call(operation(receipt), undefined, receipt.trackingToken));
+      VALUES (?, 'verified', 'legacy reviewer', ?, ?, ?)`).run(receipt.id, new Date().toISOString(), JSON.stringify([action("preserved", 100)]), snapshot);
+    const current = await ok<OperationImpact>(await historical(operation(receipt), undefined, receipt.trackingToken));
     expect(current.current).toMatchObject({ reviewRequired: true, calculation: { formulaVersion: "baseline-actual/1", net: { difference: -7 } } });
     expect((await outcome()).totals).toMatchObject({ needsRecheck: 1, verified: 0,
       verifiedFinancial: { covered: 0, value: null }, preserved: { covered: 0, value: null } });
-    await ok(await call(ws + "/operations/" + receipt.id + "/review", {
+    await ok(await historical(ws + "/operations/" + receipt.id + "/review", {
       ...changes(current.current?.id), decision: "correct", reason: "Checked the original records",
       activities: [action("preserved", 100)], evidenceReference: "legacy-asset/1",
     }, reviewerToken));
-    expect(db.prepare("SELECT calculation_json FROM impact_events WHERE id = ?").get(lastInsertRowid)?.calculation_json).toBe(historical);
+    expect(db.prepare("SELECT calculation_json FROM impact_events WHERE id = ?").get(lastInsertRowid)?.calculation_json).toBe(snapshot);
     expect((await outcome()).totals).toMatchObject({ needsRecheck: 0, verified: 1, preserved: { covered: 1, value: 0.1 } });
   });
 });

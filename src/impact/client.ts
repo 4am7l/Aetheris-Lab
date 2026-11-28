@@ -46,7 +46,7 @@ export function download(blob: Blob, name: string) {
 }
 
 const temporary = new Map<string, string>();
-export function getCredential(kind: "profile" | "membership") {
+export function getCredential(kind: "membership") {
   const active = temporary.get(kind);
   if (active) return active;
   try {
@@ -54,7 +54,7 @@ export function getCredential(kind: "profile" | "membership") {
     return fromStorage.success ? fromStorage.data : "";
   } catch { return ""; }
 }
-export function rememberCredential(kind: "profile" | "membership", credential: string) {
+export function rememberCredential(kind: "membership", credential: string) {
   if (credential) temporary.set(kind, credential);
   else temporary.delete(kind);
   try {

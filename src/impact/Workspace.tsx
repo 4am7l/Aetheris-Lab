@@ -96,7 +96,7 @@ function Affiliation({ api, identity, directory }: { api: LabApi; identity: Work
   if (!identity.labId && identity.role !== "institution-admin") return null;
   return <details className="impact-details">
     <summary>{t("Link an assessment to this laboratory", "ربط تقييم بهذا المختبر")}</summary>
-    <p>{t("Use a receipt saved in this browser. Link it before impact reporting starts.", "استخدم إيصالاً محفوظاً في هذا المتصفح واربطه قبل بدء الإبلاغ عن الأثر.")}</p>
+    <p>{t("Use a receipt saved in this browser to record its laboratory affiliation.", "استخدم إيصالاً محفوظاً في هذا المتصفح لتوثيق ارتباطه بالمختبر.")}</p>
     <WriteForm api={api} endpoint="/affiliate" build={(form) => {
       const id = field(form, "receipt");
       return { id, receipt: getTrackingToken(id), labId: optional(form, "labId") };
@@ -119,12 +119,12 @@ export function WorkspaceContent({ api, identity, isPlatform = false, assetBase 
   const manage = isPlatform || identity?.role === "institution-admin";
   const editable = manage || identity?.role === "lab-manager";
   const reviewer = isPlatform || identity?.role === "reviewer";
-  const [selected, setSelected] = useState("overview");
+  const [selected, setSelected] = useState(isPlatform ? "overview" : "inventory");
   const directory = useQuery({ queryKey: ["workspace", key, "directory"], retry: false, gcTime: 0,
     queryFn: ({ signal }) => api<OrganizationDirectory>("/directory", undefined, signal) });
   const org = directory.data ?? emptyDirectory;
   const sections = [
-    ["overview", "Impact and assessments", "الأثر والتقييمات", true],
+    ["overview", "Impact and assessments", "الأثر والتقييمات", isPlatform],
     ["inventory", "Inventory", "المخزون", true], ["explorer", "Chemical explorer", "مستكشف المواد الكيميائية", true],
     ["sds", "SDS", "صحائف السلامة", true], ["storage", "Storage compatibility", "توافق التخزين", true],
     ["tools", "Calculators", "الحاسبات", !isPlatform],
@@ -142,13 +142,13 @@ export function WorkspaceContent({ api, identity, isPlatform = false, assetBase 
     </div>
     {identity && <p><bdi>{identityLabel}</bdi> · {labLabel(lang, identity.role)}</p>}
     <FormError error={directory.error} />
-    {identity && selected === "overview" && <Affiliation api={api} identity={identity} directory={org} />}
+    {identity && selected === "inventory" && <Affiliation api={api} identity={identity} directory={org} />}
     <Suspense fallback={<p role="status">{t("Loading workspace…", "جارٍ تحميل مساحة العمل…")}</p>}>
-      {selected === "overview" && <Dashboard api={api} contextKey={key} directory={org} canReview={reviewer} scopeLabel={identityLabel} />}
+      {isPlatform && selected === "overview" && <Dashboard api={api} directory={org} />}
       {selected === "inventory" && <Inventory api={api} directory={org} context={key} editable={editable} />}
       {(selected === "explorer" || selected === "storage") && <Explorer key={selected} api={api} scope={key} directory={org} reviewer={reviewer} storageOnly={selected === "storage"} assetBase={assetBase} />}
       {selected === "sds" && <Documents api={api} directory={org} context={key} reviewer={reviewer} editable={editable} />}
-      {selected === "tools" && !isPlatform && <Calculators api={api} />}
+      {selected === "tools" && !isPlatform && <Calculators />}
       {selected === "refs" && manage && <ReferenceManager api={api} directory={org} context={key} platform={isPlatform} />}
       {selected === "org" && manage && <Organizations api={api} directory={org} context={key} platform={isPlatform} memberInstitution={identity?.institutionId} />}
       {selected === "emergency" && <Emergency api={api} directory={org} context={key} manage={manage} institution={identity?.institutionId} />}

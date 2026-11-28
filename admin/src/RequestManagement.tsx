@@ -30,6 +30,7 @@ export function RequestManagement({ ids, archived, csrfToken, onSaved }: {
       await Promise.all([
         client.invalidateQueries({ queryKey: ["admin", "queue"] }),
         client.invalidateQueries({ queryKey: ["admin", "request"], refetchType: "none" }),
+        client.invalidateQueries({ queryKey: ["impact-overview"] }),
       ]);
     },
     onError(error) {

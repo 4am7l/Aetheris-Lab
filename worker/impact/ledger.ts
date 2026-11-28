@@ -1,7 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { z } from "zod";
 import { publicRequestIdSchema, publicResultSchema, type PublicResult } from "../../src/domain";
-import type { ImpactEvent, OperationImpact } from "../../src/impact/contracts";
+import type { AssessmentStatistics, ImpactEvent, OperationImpact } from "../../src/impact/contracts";
 import { activityList, calculateImpact, evidenceKey, eventKey, scenarioSchema,
   type Activity, type ImpactCalculation, type ImpactState, type Scenario } from "../../src/impact/model";
 import { error, json } from "../http";
@@ -10,6 +10,7 @@ import { calculationReferences } from "./catalog";
 import { fixedGuideEstimates, reviewGuideMatch } from "./fixedGuide";
 import { body, longText, timestamp } from "./io";
 import { activityFormulations, assessedStocks, assessedTotals, preservationTotals, validateActivities, validateScenario, type Stocks } from "./quantities";
+import { singleAssessmentStatistics } from "./analytics";
 
 const change = { key: eventKey, expectedId: z.number().int().min(0) };
 const reportSchema = z.strictObject({ ...change, activities: activityList });
@@ -73,6 +74,19 @@ async function approved(db: D1Database, id: string) {
 
 async function currentEvent(db: D1Database, id: string) {
   return db.prepare(`SELECT ${fields} FROM impact_events WHERE request_id = ? ORDER BY id DESC LIMIT 1`).bind(id).first<EventRow>();
+}
+
+export async function readAssessmentStatistics(request: Request, db: D1Database, id: string, platform = false) {
+  if (!publicRequestIdSchema.safeParse(id).success || (!platform && !await receiptAuthorized(db, id, bearer(request)))) {
+    return error("NOT_FOUND", 404);
+  }
+  const row = await approved(db, id);
+  if (!row) return error("NOT_FOUND", 404);
+  const stocks = assessedStocks(row.input);
+  const stats = await singleAssessmentStatistics(db, id);
+  if (!stats || stats.status !== "Approved" || stats.completedAt !== row.approvedAt) return error("NOT_FOUND", 404);
+  const fixedGuide = await fixedGuideEstimates(db, id, row.runId, stocks);
+  return json({ ...stats, assessed: assessedTotals(stocks), fixedGuide } satisfies AssessmentStatistics);
 }
 
 async function show(db: D1Database, id: string, row: ApprovedRow) {

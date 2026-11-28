@@ -141,7 +141,7 @@ export default function Receipt() {
       {saved && !tracking.isError && tracking.data?.status === "Approved" ? (
         <>
           <ApprovedResultPanel result={tracking.data.result} />
-          <ReceiptImpact id={tracking.data.id} result={tracking.data.result} />
+          <ReceiptImpact id={tracking.data.id} />
         </>
       ) : (
         <div className="result-locked">

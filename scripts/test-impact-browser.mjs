@@ -1,4 +1,4 @@
-/* global fetch, document, innerWidth, localStorage */
+/* global fetch, document, getComputedStyle, innerWidth, localStorage */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -47,20 +47,18 @@ async function fixture() {
   const dept = randomUUID();
   const lab = randomUUID();
   const manager = randomBytes(32).toString("hex");
-  const reviewer = randomBytes(32).toString("hex");
   const hash = value => createHash("sha256").update(value).digest("hex");
   const now = new Date().toISOString();
   db.prepare("INSERT INTO institutions VALUES(?,?,?,?,?)").run(org, "جامعة التحقق", "Verification University", "JO", now);
   db.prepare("INSERT INTO institution_departments VALUES(?,?,?,?)").run(dept, org, "قسم التحقق", "Verification Department");
   db.prepare("INSERT INTO institution_labs VALUES(?,?,?,?,?)").run(lab, org, dept, "مختبر التحقق", "Verification Laboratory");
-  for (const [id, token, role] of [[actor, manager, "lab-manager"], [randomUUID(), reviewer, "reviewer"]]) {
-    db.prepare(`INSERT INTO institution_memberships(id,institution_id,lab_id,role,token_hash,invitation_hash,invite_expires_at,created_at,created_by,accepted_at)
-     VALUES(?,?,?,?,?,?,'2999-01-01',?,'local fixture',?)`).run(id, org, lab, role, hash("membership:" + token), hash("fixture:" + token), now, now);
-  }
+  db.prepare(`INSERT INTO institution_memberships(id,institution_id,lab_id,role,token_hash,invitation_hash,invite_expires_at,created_at,created_by,accepted_at)
+     VALUES(?,?,?,'lab-manager',?,?,'2999-01-01',?,'local fixture',?)`).run(actor, org, lab, hash("membership:" + manager), hash("fixture:" + manager), now, now);
   const water = { name: "Water", formula: "H2O", cas: "7732-18-5", concentration: "Unknown", unit: "Unknown",
     solvent: "Water", state: "Liquid", temperature: "25", quantity: "100", quantityUnit: "mL", notes: "", source: "Manual entry" };
   const silverNitrate = { ...water, name: "Silver nitrate", formula: "AgNO3", cas: "7761-88-8", concentration: "0.1", unit: "mol/L" };
   const receipt = await post("/api/requests", { a: silverNitrate, b: { ...water, quantity: "200" }, conditions: "" });
+  await post("/api/requests", { a: { ...silverNitrate, name: "Private fixture without a saved receipt" }, b: water, conditions: "" });
   await post("/api/impact/workspace/affiliate", { id: receipt.id, receipt: receipt.trackingToken }, manager);
   const run = randomUUID();
   db.prepare("INSERT INTO public_agent_runs(id,request_id,status,started_at,lease_until) VALUES(?,?,'running',?,?)").run(run,receipt.id,now,now);
@@ -71,26 +69,165 @@ async function fixture() {
     incompatibilities: [], storage: "", container: "", limitations: ["Test fixture only"],
     sources: [{ title: "PubChem · Water", url: "https://pubchem.ncbi.nlm.nih.gov/compound/962" }], reviewedAt: now,
   }), now);
+  const comparison = (baseline, actual) => ({ baseline, actual, difference: baseline - actual });
+  const insert = db.prepare(`INSERT INTO impact_events(request_id, state, actor, created_at, calculation_json, integrity_version, evidence_keys)
+    VALUES (?, ?, 'synthetic ledger history', ?, ?, 2, ?)`);
+  insert.run(receipt.id, "estimated", now, JSON.stringify({ result: {
+    currency: "JOD", net: comparison(9, 5), avoidedCo2e: comparison(0.4, 0), wasteAvoided: comparison(0.1, 0.025),
+  } }), null);
+  insert.run(receipt.id, "verified", now, JSON.stringify({ realizedEvidence: "Synthetic baseline and outcome comparison", result: {
+    currency: "JOD", net: comparison(9, 7), avoidedCo2e: comparison(0.15, 0), wasteAvoided: comparison(0.05, 0),
+  } }), JSON.stringify([hash("browser-fixture:" + receipt.id)]));
   db.close();
-  const cost = (baseline, actual, kind) => ({ baseline: [{ amount: baseline, evidence: "Local reference " + kind }],
-    actual: [{ amount: actual, evidence: "Local documented actual " + kind }] });
-  await post("/api/impact/workspace/operations/" + receipt.id + "/estimate", { key: randomUUID(), expectedId: 0, scenario: {
-    beneficiary: "institution", assumptions: "تم تسجيل السيناريو المرجعي والتدخل لهذا الاختبار.",
-    references: [{ title: "دليل الاختبار", url: "https://pubchem.ncbi.nlm.nih.gov/compound/962" }], financial: {
-      purchase: cost(10, 5, "purchase"), disposal: cost(2, 0, "disposal"), handling: cost(0, 3, "handling"),
-      treatment: cost(0, 0, "treatment"), recovery: cost(0, 0, "recovery"),
-    },
-  } }, reviewer);
-  return { receipt, manager, reviewer };
+  return { receipt, manager };
+}
+
+async function arrowFree(page) {
+  const selects = await page.locator("select:visible").evaluateAll((fields) => fields.map((field) => {
+    const style = field.ownerDocument.defaultView.getComputedStyle(field);
+    return { appearance: style.appearance, image: style.backgroundImage, repeat: style.backgroundRepeat };
+  }));
+  assert(selects.length > 0, "Expected a visible native select");
+  for (const select of selects) {
+    assert.deepEqual(select, { appearance: "none", image: "none", repeat: "no-repeat" });
+  }
+  assert.equal(await page.locator(":is(.MuiNativeSelect-icon, .MuiSelect-icon):visible").count(), 0);
+}
+
+async function materialFocus(field) {
+  await field.focus();
+  const styles = await field.evaluate((element) => {
+    const view = element.ownerDocument.defaultView;
+    const shell = element.closest(".MuiOutlinedInput-root");
+    const stroke = view.getComputedStyle(shell.querySelector(".MuiOutlinedInput-notchedOutline"));
+    const inner = view.getComputedStyle(element);
+    return { border: inner.borderTopWidth, outline: inner.outlineStyle, fieldStroke: stroke.borderTopWidth,
+      height: view.getComputedStyle(shell).height };
+  });
+  assert.deepEqual(styles, { border: "0px", outline: "none", fieldStroke: "2px", height: "52px" });
+}
+
+async function checkPublicFields(page) {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(ui);
+  const renderedIcons = await page.evaluate(async () => {
+    await document.fonts.ready;
+    return [...document.querySelectorAll(".sidebar nav .material-symbols-rounded")].map((icon) => icon.getBoundingClientRect().width);
+  });
+  assert.equal(renderedIcons.length, 8);
+  assert(renderedIcons.every((width) => width >= 20 && width <= 26), "Navbar icons must render as Material Symbols without a CDN");
+  const homeSearch = page.locator(".home-search input");
+  await homeSearch.focus();
+  assert.deepEqual(await homeSearch.evaluate((input) => {
+    const view = input.ownerDocument.defaultView;
+    return [view.getComputedStyle(input).outlineStyle, view.getComputedStyle(input.parentElement).outlineWidth];
+  }), ["none", "2px"]);
+  await homeSearch.fill("Ethanol");
+  await homeSearch.press("Enter");
+  const librarySearch = page.getByRole("searchbox", { name: "Search library" });
+  await librarySearch.waitFor();
+  assert.equal(await librarySearch.inputValue(), "Ethanol");
+  await materialFocus(librarySearch);
+  await page.keyboard.press("Tab");
+  const clearSearch = page.getByRole("button", { name: "Clear search", exact: true });
+  assert.equal(await clearSearch.evaluate((button) => button === document.activeElement), true);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.querySelector(".search-field input").value === "");
+  assert.equal(await librarySearch.evaluate((input) => input === document.activeElement), true);
+
+  const current = page.locator('.sidebar nav a[aria-current="page"]');
+  assert.equal(await current.getAttribute("href"), "/library");
+  await page.keyboard.press("Tab");
+  await current.focus();
+  assert.equal(await current.evaluate((link) => link.ownerDocument.defaultView.getComputedStyle(link).outlineWidth), "2px");
+  const next = page.locator('.sidebar nav a[href="/analysis"]');
+  await next.hover();
+  await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('.sidebar nav a[href="/analysis"]'), "::before").opacity) >= 0.07);
+  const bounds = await next.boundingBox();
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.down();
+  await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('.sidebar nav a[href="/analysis"]'), "::before").opacity) >= 0.13);
+  await page.mouse.move(1, 1);
+  await page.mouse.up();
+  await page.emulateMedia({ forcedColors: "active" });
+  assert.equal(await page.locator(".sidebar").evaluate((el) => el.ownerDocument.defaultView.getComputedStyle(el).backdropFilter), "none");
+  await page.emulateMedia({ forcedColors: "none" });
+  assert.equal(await page.locator(".sidebar").evaluate((el) => el.ownerDocument.defaultView.getComputedStyle(el).backdropFilter), "blur(14px)");
+  await page.screenshot({ path: path.join(output, "library-light-desktop.png") });
+
+  await page.goto(ui + "/analysis");
+  await page.getByRole("button", { name: "Search library", exact: true }).first().click();
+  const search = page.getByRole("dialog").getByRole("searchbox", { name: "Search an indexed substance" });
+  await materialFocus(search);
+  await search.fill("Ethanol");
+  await page.getByRole("dialog").getByRole("button", { name: /Ethanol/ }).first().waitFor();
+  await page.screenshot({ path: path.join(output, "analysis-search-desktop.png") });
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Enter manually", exact: true }).first().click();
+  const manual = page.getByRole("dialog");
+  await arrowFree(page);
+  const solvent = manual.getByRole("combobox", { name: "Solvent", exact: true });
+  await materialFocus(solvent);
+  await solvent.press("Home");
+  assert.equal(await solvent.inputValue(), "Water");
+  await page.screenshot({ path: path.join(output, "analysis-fields-desktop.png") });
+  await manual.getByRole("button", { name: "Close", exact: true }).click();
+  await page.locator("#dilution-assumptions").locator("..").getByRole("checkbox").first().check();
+  const volume = page.getByRole("combobox").last();
+  await volume.press("Enter");
+  await page.getByRole("option", { name: "L", exact: true }).click();
+  assert.equal(await volume.innerText(), "L");
+  assert.equal(await page.locator(":is(.MuiNativeSelect-icon, .MuiSelect-icon):visible").count(), 0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(ui + "/library/explorer");
+  await page.getByText("العربية", { exact: true }).click();
+  await page.getByRole("button", { name: "تفعيل الوضع الداكن", exact: true }).click();
+  assert.equal(await page.locator("html").getAttribute("dir"), "rtl");
+  assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
+  const explorerSearch = page.getByRole("searchbox", { name: "البحث في المراجع الكيميائية" });
+  await materialFocus(explorerSearch);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.screenshot({ path: path.join(output, "explorer-dark-rtl-mobile.png") });
+  await page.locator(".mobile-toggle").click();
+  const navigation = page.getByRole("navigation", { name: "التنقل الرئيسي" });
+  await navigation.getByRole("link").first().waitFor({ state: "visible" });
+  await page.waitForFunction(() => Math.abs(document.querySelector(".sidebar").getBoundingClientRect().right - innerWidth) < 1);
+  assert.equal(await page.locator(".mobile-toggle").getAttribute("aria-expanded"), "true");
+  await page.screenshot({ path: path.join(output, "sidebar-dark-rtl-mobile.png") });
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".mobile-toggle").getAttribute("aria-expanded"), "false");
+  await page.getByRole("button", { name: "تفعيل الوضع الفاتح", exact: true }).click();
+  await page.getByText("English", { exact: true }).click();
+}
+
+async function checkTouch(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    const phone = await context.newPage();
+    await phone.goto(ui);
+    await phone.locator(".mobile-toggle").tap();
+    await phone.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Chemical Analysis" }).tap();
+    await phone.waitForURL(ui + "/analysis");
+    assert.equal(await phone.locator(".mobile-toggle").getAttribute("aria-expanded"), "false");
+    await phone.getByRole("button", { name: "Enter manually", exact: true }).first().tap();
+    const solvent = phone.getByRole("dialog").getByRole("combobox", { name: "Solvent", exact: true });
+    await arrowFree(phone);
+    await solvent.tap();
+    await solvent.selectOption("Water");
+    assert.equal(await solvent.inputValue(), "Water");
+  } finally {
+    await context.close();
+  }
 }
 
 async function main() {
-  const { receipt, manager, reviewer } = await fixture();
+  const { receipt, manager } = await fixture();
   const browser = await chromium.launch({ headless: true, executablePath: process.env.AETHERIS_TEST_CHROMIUM });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, acceptDownloads: true });
   await context.route("**/*", (route) => {
     const origin = new URL(route.request().url()).origin;
-    return [ui, "https://fonts.googleapis.com", "https://fonts.gstatic.com"].includes(origin) ? route.continue() : route.abort();
+    return origin === ui ? route.continue() : route.abort();
   });
   await context.addInitScript(({ receipt, manager }) => {
     localStorage.setItem("aetheris.receipt.v1." + receipt.id, JSON.stringify(receipt));
@@ -106,8 +243,10 @@ async function main() {
     }
   });
   try {
+    await checkPublicFields(page);
     await page.goto(ui + "/tools");
     await page.getByRole("heading",{ name:"Periodic table", exact: true }).waitFor();
+    await arrowFree(page);
     assert.equal(await page.locator(".impact-element").count(), 118);
     await page.getByRole("button",{ name:"Oxygen 8", exact: true }).click();
     await page.getByRole("heading",{ name:/Oxygen/ }).waitFor();
@@ -128,20 +267,30 @@ async function main() {
     await page.getByText("There is no qualified reference for this pair.").waitFor();
 
     await page.goto(ui + "/impact");
-    await page.getByRole("button",{ name:"Create private dashboard", exact:true }).click();
-    await page.getByRole("heading",{ name:"Personal impact", exact:true }).last().waitFor();
-    await page.selectOption("#personal-receipt", receipt.id);
-    await page.getByRole("button",{ name:"Link receipt", exact:true }).click();
-    await page.getByText("Receipt linked.",{exact:true}).waitFor();
-    await page.getByRole("link",{ name:"Open receipt", exact:true }).waitFor();
+    await page.getByRole("heading", { name: "Cumulative totals", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Hypothetical experimental estimates", exact: true }).first().waitFor();
+    await page.getByRole("heading", { name: "Verified real-world outcomes", exact: true }).first().waitFor();
+    await page.getByText("4.000 JOD", { exact: true }).first().waitFor();
+    await page.getByText("2.000 JOD", { exact: true }).first().waitFor();
+    assert.equal(await page.getByText(/Private fixture without a saved receipt/).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Create private dashboard" }).count(), 0);
+    await page.getByText(/Silver nitrate · Water/).click();
+    await page.getByRole("link", { name: "Open receipt", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Mobile dashboard overflow");
+    await page.getByText("العربية", { exact:true }).click();
+    await page.getByRole("heading", { name: "المجاميع التراكمية", exact: true }).waitFor();
+    await page.getByRole("button", { name: "تفعيل الوضع الداكن", exact: true }).click();
+    await page.screenshot({ path: path.join(output, "dashboard-dark-mobile.png"), fullPage: true });
+    await page.getByRole("button", { name: "تفعيل الوضع الفاتح", exact: true }).click();
+    await page.getByText("English", { exact:true }).click();
 
     await page.goto(ui + "/requests/" + receipt.id + "/receipt");
-    await page.getByRole("heading",{ name:"Estimated impact", exact:true }).waitFor();
+    await page.getByRole("heading",{ name:"Assessment impact", exact:true }).waitFor();
     await page.getByRole("heading", { name: "Fixed reference estimates", exact: true }).waitFor();
-    await page.getByText("1.50 kg CO₂e/L", { exact: true }).waitFor();
+    await page.getByText("1.50 كغم/لتر", { exact: true }).waitFor();
     await page.getByText(/0\.1 L · 4\.500 JOD · 0\.15 kg CO₂e/).waitFor();
     await page.getByText("العربية", { exact:true }).click();
-    await page.getByRole("heading",{ name:"الأثر التقديري", exact:true }).waitFor();
+    await page.getByRole("heading",{ name:"أثر التقييم", exact:true }).waitFor();
     await page.getByRole("heading", { name: "تقديرات الدليل الثابت", exact: true }).waitFor();
     assert.equal(await page.locator("html").getAttribute("dir"), "rtl");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Arabic receipt overflow");
@@ -150,45 +299,16 @@ async function main() {
     await (await ar).saveAs(path.join(output,"operation-ar.pdf"));
     await page.locator(".impact-panel").first().screenshot({ path: path.join(output,"receipt-ar-mobile.png") });
     await page.getByText("English", { exact:true }).click();
-    await page.getByRole("heading",{ name:"Estimated impact", exact:true }).waitFor();
+    await page.getByRole("heading",{ name:"Assessment impact", exact:true }).waitFor();
     assert.equal(await page.locator("html").getAttribute("dir"), "ltr");
     const en = page.waitForEvent("download");
     await page.getByRole("button",{ name:"Download impact PDF", exact:true }).click();
     await (await en).saveAs(path.join(output,"operation-en.pdf"));
-    await page.getByText("Document the action taken", { exact: true }).click();
-    await page.locator('select[name="kind0"]').selectOption("preserved");
-    await page.locator('input[name="quantity0"]').fill("100");
-    await page.locator('select[name="unit0"]').selectOption("mL");
-    await page.locator('select[name="side0"]').selectOption("A");
-    await page.getByRole("button", { name: "Submit for verification", exact: true }).click();
-    await page.getByText("Pending verification", { exact: true }).first().waitFor();
-    await page.getByRole("button", { name: "Withdraw action report", exact: true }).waitFor();
-    const operation = "/api/impact/operations/" + receipt.id;
-    const pending = await responseJson(operation, { headers: { Authorization: "Bearer " + receipt.trackingToken } });
-    assert.equal(pending.current.state, "pending-verification");
-    const verified = await post("/api/impact/workspace/operations/" + receipt.id + "/review", {
-      key: randomUUID(), expectedId: pending.current.id, decision: "verify",
-      reason: "Local reviewer checked the original fixture", evidenceReference: "local/audit/" + receipt.id,
-    }, reviewer);
-    assert.deepEqual(verified.fixedGuide[0].actionEstimate, { volume: 0.1, combinedCost: 4.5, co2e: 0.15 });
+    assert.equal(await page.getByText("Document the action taken", { exact: true }).count(), 0);
 
     await page.goto(ui + "/laboratory");
-    await page.getByRole("heading",{ name:"Sustainability and impact", exact:true }).waitFor();
-    await page.getByRole("heading", { name: "Scenario estimates", exact: true }).waitFor();
-    await page.getByRole("heading", { name: "Verified outcomes", exact: true }).waitFor();
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Mobile dashboard overflow");
-    await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
-    await page.getByRole("button", { name: "Switch to light mode", exact: true }).waitFor();
-    await page.screenshot({ path: path.join(output, "dashboard-dark-mobile.png"), fullPage: true });
-    await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
-    const csvWait = page.waitForEvent("download");
-    await page.getByRole("button",{ name:"Export CSV", exact:true }).click();
-    await (await csvWait).saveAs(path.join(output,"lab.csv"));
-    const csv = fs.readFileSync(path.join(output,"lab.csv"),"utf8");
-    assert(csv.includes(receipt.id) && csv.includes("Estimated avoided kg CO2e from verified activity"));
-    const pdfWait = page.waitForEvent("download");
-    await page.getByRole("button",{ name:"Download PDF", exact:true }).click();
-    await (await pdfWait).saveAs(path.join(output,"lab-en.pdf"));
+    await page.getByRole("button", { name: "Inventory", exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Impact and assessments", exact: true }).count(), 0);
     await page.getByRole("button",{ name:"SDS", exact:true }).click();
     await page.getByText("Inspect and upload a PDF", { exact:true }).click();
     const scanFixture = new jsPDF();
@@ -205,13 +325,21 @@ async function main() {
     await page.getByRole("button",{ name:"Download original PDF", exact:true }).click();
     await (await original).saveAs(path.join(output,"sds-downloaded.pdf"));
     assert.deepEqual(fs.readFileSync(scanPath), fs.readFileSync(path.join(output,"sds-downloaded.pdf")));
-    for (const name of ["operation-ar.pdf", "operation-en.pdf", "lab-en.pdf"]) {
+    for (const name of ["operation-ar.pdf", "operation-en.pdf"]) {
       const bytes = fs.readFileSync(path.join(output, name));
       assert.equal(bytes.subarray(0, 5).toString(), "%PDF-");
       assert(bytes.length > 1000, "Downloaded PDF content is incomplete");
     }
+    await checkTouch(browser);
+    await page.setViewportSize({ width: 320, height: 760 });
+    for (const route of ["/requests", "/about", "/library/ethanol"]) {
+      await page.goto(ui + route);
+      await page.locator("main .page h1").first().waitFor();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, route + " overflows at 320 px");
+    }
     assert.deepEqual(errors, []);
-    console.log("PASS Chromium at 390 px: local catalogue, periodic table, molar mass, comparison, matrix, personal dashboard, EN/AR and both themes, action report and review, operation PDFs, lab PDF and CSV, SDS extraction and identical private R2 download");
+    console.log("PASS public controls: keyboard and touch, native and Material selects, single field focus, both search forms, local icons, navigation states and high-contrast fallback");
+    console.log("PASS Chromium at 390 px: local catalogue, periodic table, molar mass, comparison, matrix, receipt-scoped automatic impact in both languages and themes, assessment PDFs, SDS extraction and identical private R2 download");
   } catch (err) {
     await page.screenshot({ path: path.join(output, "smoke-failure.png"), fullPage: true }).catch(() => {});
     console.log("Page errors:", errors);

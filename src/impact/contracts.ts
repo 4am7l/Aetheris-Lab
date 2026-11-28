@@ -61,20 +61,33 @@ export interface WorkspaceIdentity {
 }
 
 export interface ImpactMetric { value: number | null; covered: number }
+export const receiptStatisticsBatchSize = 100;
+export interface AssessmentImpactValues {
+  estimate: number | null; realized: number | null;
+  estimatedWaste: number | null; estimatedWasteKg: number | null;
+  waste: number | null; wasteKg: number | null;
+  carbon: number | null; verifiedCarbon: number | null;
+}
+export interface AssessmentImpact extends AssessmentImpactValues {
+  id: string; date: string; completedAt: string | null; status: PublicRequestStatus; names: string[];
+}
+export interface AssessmentStatistics extends AssessmentImpact {
+  assessed: OperationImpact["assessed"];
+  fixedGuide: FixedGuideEstimate[];
+}
 export interface ImpactTotals {
   assessments: number; approved: number; completed: number; reported: number; verified: number; pending: number;
   prevention: number; incompatibilities: number; needsRecheck: number; confirmedActions: number;
   estimatedFinancial: ImpactMetric; verifiedFinancial: ImpactMetric; purchase: ImpactMetric; replacement: ImpactMetric; disposal: ImpactMetric;
+  estimatedAvoided: ImpactMetric; estimatedAvoidedKg: ImpactMetric;
   assessed: ImpactMetric; preserved: ImpactMetric; preservedKg: ImpactMetric; avoided: ImpactMetric; avoidedKg: ImpactMetric;
   segregated: ImpactMetric; segregatedKg: ImpactMetric; recovery: ImpactMetric; recoveryKg: ImpactMetric;
   authorizedDisposal: ImpactMetric; authorizedDisposalKg: ImpactMetric; carbon: ImpactMetric; verifiedCarbon: ImpactMetric;
 }
 export interface ImpactBucket extends ImpactTotals { period: string }
-export interface ImpactLog {
-  id: string; date: string; completedAt: string | null; status: PublicRequestStatus; names: string[];
+export interface ImpactLog extends AssessmentImpact {
   state: ImpactState | null; actions: ActivityKind[]; labId: string | null; labName: string | null;
-  estimate: number | null; realized: number | null; waste: number | null; wasteKg: number | null;
-  carbon: number | null; verifiedCarbon: number | null; reviewRequired: boolean; findings: string[];
+  reviewRequired: boolean; findings: string[];
 }
 export interface ImpactOverview {
   totals: ImpactTotals;

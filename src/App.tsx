@@ -154,7 +154,7 @@ export default function App() {
                 </Link>
 
                 <nav
-                  aria-label="Main navigation"
+                  aria-label={lang === "ar" ? "التنقل الرئيسي" : "Main navigation"}
                   onClick={() => setMenu(false)}
                 >
                   {nav.map(([path, key, icon]) => (

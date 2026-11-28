@@ -25,12 +25,6 @@ export function bearer(request: Request) {
   return /^Bearer ([a-f0-9]{64})$/i.exec(request.headers.get("Authorization") ?? "")?.[1];
 }
 
-export async function profile(db: D1Database, request: Request) {
-  const credential = bearer(request);
-  return credential ? db.prepare("SELECT id FROM impact_profiles WHERE token_hash = ? AND revoked_at IS NULL")
-    .bind(await digest("profile:" + credential)).first<{ id: string }>() : null;
-}
-
 export async function member(db: D1Database, credential: string | undefined) {
   if (!credential) return null;
   const row = await db.prepare(`
