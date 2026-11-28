@@ -15,7 +15,7 @@
     "worker:dev": "wrangler dev",
     "worker:deploy": "wrangler deploy",
     "build:public": "tsc -p tsconfig.public.json && vite build && node scripts/generate-app-icons.mjs && node scripts/check-public-build.mjs",
-    "build:admin": "tsc -p admin/tsconfig.json && vite build admin --config admin/vite.config.ts",
+    "build:admin": "tsc -p admin/tsconfig.json && vite build admin --config admin/vite.config.ts && node scripts/generate-app-icons.mjs --admin",
     "test:public-build": "npm run build:public"
   },
   "dependencies": {
