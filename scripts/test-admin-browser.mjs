@@ -207,7 +207,10 @@ async function checkLayout(page, data, lang, theme, mobile, width) {
       await review.tap();
       await page.getByRole("listbox").waitFor();
     }
-    await page.screenshot({ path: path.join(output, `admin-review-${lang}-${theme}-${mobile ? "mobile" : "desktop"}.png`) });
+    await page.screenshot({
+      path: path.join(output, `admin-review-${lang}-${theme}-${mobile ? "mobile" : "desktop"}.png`),
+      animations: "disabled",
+    });
     if (mobile) {
       await page.keyboard.press("Escape");
       await page.getByRole("listbox").waitFor({ state: "hidden" });
@@ -230,7 +233,8 @@ async function checkLayout(page, data, lang, theme, mobile, width) {
   assert.equal(await period.inputValue(), "all");
   await noOverflow(page, width);
   if (lang === "ar" && theme === "dark" && mobile) {
-    await page.screenshot({ path: path.join(output, "admin-sustainability-ar-dark-mobile.png") });
+    await period.press("Escape");
+    await page.screenshot({ path: path.join(output, "admin-sustainability-ar-dark-mobile.png"), animations: "disabled" });
   }
   await auditWorkspace(page, lang, data);
   await noOverflow(page, width);
