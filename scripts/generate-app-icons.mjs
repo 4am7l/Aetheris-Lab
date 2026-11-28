@@ -1,3 +1,4 @@
+import { argv } from "node:process";
 import { Buffer } from "node:buffer";
 import { URL } from "node:url";
 import { writeFileSync } from "node:fs";
@@ -12,7 +13,9 @@ function chunk(type,data) {
   length.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(Buffer.concat([name,data])));
   return Buffer.concat([length,name,data,crc]);
 }
+const admin = argv.includes("--admin");
 const segments=[[23,12,41,12],[27,12,27,29],[27,29,14,46],[14,46,17,51],[17,51,47,51],[47,51,50,46],[50,46,37,29],[37,29,37,12],[21,39,43,39]];
+if (admin) segments.push([44,48,48,52],[48,52,56,43]);
 function distance(x,y,[a,b,c,d]) {
   const t=Math.max(0,Math.min(1,((x-a)*(c-a)+(y-b)*(d-b))/((c-a)**2+(d-b)**2)));
   return Math.hypot(x-a-t*(c-a),y-b-t*(d-b));
@@ -27,5 +30,5 @@ for (const size of [180,192,512]) {
     [20,27,33].forEach((v,i)=>raw[offset+i]=Math.round(v+alpha*([130,177,255][i]-v)));
   }
   const header=Buffer.alloc(13);header.writeUInt32BE(size,0);header.writeUInt32BE(size,4);header[8]=8;header[9]=2;
-  writeFileSync(new URL('../dist/app-icon-'+size+'.png',import.meta.url),Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk("IHDR",header),chunk("IDAT",deflateSync(raw)),chunk("IEND",Buffer.alloc(0))]));
+  writeFileSync(new URL((admin ? '../admin/dist/' : '../dist/')+'app-icon-'+size+'.png',import.meta.url),Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk("IHDR",header),chunk("IDAT",deflateSync(raw)),chunk("IEND",Buffer.alloc(0))]));
 }
