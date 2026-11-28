@@ -5,7 +5,9 @@ import Checkbox from "@mui/material/Checkbox";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import { useLanguage, useText } from "../text";
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { usePublicCatalog } from "../services/publicCatalog";
+import { matchesCatalogChemical, normalizeCatalogTerm } from "../impact/catalogSearch";
+import { labLabel } from "../impact/labels";
 import {
   blankSolution,
   chemicalClassifications,
@@ -19,7 +21,6 @@ import {
   type Solution,
 } from "../domain";
 import { classificationLabels, solventLabels, submittedSolutionFields } from "../chemistryLabels";
-import { catalog } from "../services/local";
 import { Icon, Modal, Notice } from "../ui";
 import SearchField from "./SearchField";
 type Method = "manual" | "search" | "camera" | null;
@@ -57,11 +58,8 @@ export function SolutionCard({
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
-  const results = useQuery({
-    queryKey: ["catalog", query],
-    queryFn: () => catalog.search(query),
-    enabled: method === "search",
-  });
+  const results = usePublicCatalog(method === "search");
+  const matches = results.data?.filter((c) => matchesCatalogChemical(c, normalizeCatalogTerm(query))) ?? [];
   const update = <K extends keyof Solution,>(key: K, v: Solution[K]) =>
     setForm((f) => ({
       ...f,
@@ -315,28 +313,28 @@ export function SolutionCard({
           <SearchField
             autoFocus
             accessibleName={t("searchSelect")}
-            placeholder={t("searchPlaceholder")}
+            placeholder={t("catalogSearchPlaceholder")}
             helperText={t("sourceSelection")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div className="search-results">
+          <div className="search-results" style={{ maxHeight: "50vh", overflowY: "auto" }}>
             {results.isPending ? (
               <div className="skeleton" />
             ) : results.isError ? (
-              <Notice kind="error">{t("error")}</Notice>
-            ) : results.data.length ? (
-              results.data.map((c) => (
+              <Notice kind="error">{t("catalogUnavailable")} <Button onClick={() => void results.refetch()}>{t("retry")}</Button></Notice>
+            ) : matches.length ? (
+              matches.map((c) => (
                 <button
                   className="search-result"
                   key={c.id}
                   onClick={() => {
                     setForm({
                       ...blankSolution,
-                      name: c.name,
-                      formula: c.formula,
-                      cas: c.cas,
-                      source: "NIOSH catalog",
+                      name: c.nameEn,
+                      formula: c.formula ?? unknown,
+                      cas: c.cas ?? unknown,
+                      source: "Manual entry",
                     });
                     setMethod("manual");
                     setErrors({});
@@ -344,9 +342,10 @@ export function SolutionCard({
                 >
                   <span className="mini-formula">{c.formula}</span>
                   <span>
-                    <strong>{c.name}</strong>
+                    <strong>{language === "ar" ? c.nameAr : c.nameEn}</strong>
                     <small>
-                      CAS {c.cas} · {c.category}
+                      CAS {c.cas ?? "—"} · {c.category ? labLabel(language, c.category) : t("catalogNotRecorded")}
+                      {c.concentration && <> · {c.concentration}</>}
                     </small>
                   </span>
                   <Icon name="add_circle" />
