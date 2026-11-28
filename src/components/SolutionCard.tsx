@@ -21,6 +21,7 @@ import {
 import { classificationLabels, solventLabels, submittedSolutionFields } from "../chemistryLabels";
 import { catalog } from "../services/local";
 import { Icon, Modal, Notice } from "../ui";
+import SearchField from "./SearchField";
 type Method = "manual" | "search" | "camera" | null;
 type TextFieldKey = "name" | "formula" | "cas" | "concentration" | "temperature" | "quantity";
 export interface ImageAttachment {
@@ -311,16 +312,14 @@ export function SolutionCard({
           title={`${t("searchSelect")} · ${letter}`}
           onClose={() => setMethod(null)}
         >
-          <div className="search-box">
-            <Icon name="search" />
-            <input
-              autoFocus
-              placeholder={t("searchPlaceholder")}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
-          <p className="small muted">{t("sourceSelection")}</p>
+          <SearchField
+            autoFocus
+            accessibleName={t("searchSelect")}
+            placeholder={t("searchPlaceholder")}
+            helperText={t("sourceSelection")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
           <div className="search-results">
             {results.isPending ? (
               <div className="skeleton" />

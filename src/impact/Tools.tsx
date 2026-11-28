@@ -1,18 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@mui/material";
-import { useMutation } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import PageHeading from "../components/PageHeading";
 import { useLanguage } from "../text";
 import elements from "./elements.json";
-import { FormError, LabInput, LabSelect, Submit } from "./Inputs";
+import { LabInput, LabSelect, Submit } from "./Inputs";
 import { field, numeric } from "./formData";
-import { CalculationView, MetricCards } from "./Operation";
-import { ScenarioEditor } from "./ScenarioEditor";
-import { readScenario } from "./scenarioForm";
+import { MetricCards } from "./Statistics";
 import { concentrationSource, periodicSource, scientific, type ScientificMode } from "./scientificCalculator";
-import { quantityUnits, type ImpactCalculation } from "./model";
-import { labApi, words, type LabApi } from "./client";
+import { quantityUnits } from "./model";
+import { words } from "./client";
 import { numberLabel } from "./labels";
 import "./impact.css";
 
@@ -23,7 +20,6 @@ const modes = [
   ["percent-mass", "Mass percentage", "النسبة المئوية الكتلية"], ["percent-volume", "Volume percentage", "النسبة المئوية الحجمية"],
   ["percent-mass-volume", "Mass–volume percentage", "النسبة المئوية كتلة/حجم"],
   ["conversion", "Unit conversion", "تحويل الوحدات"], ["balance", "Conserved solute mass balance", "اتزان كتلة المذاب المحفوظة"],
-  ["impact", "Financial and environmental impact", "الأثر المالي والبيئي"],
 ] as const;
 
 type InputLabels = [string, string][];
@@ -42,19 +38,16 @@ const labels: Partial<Record<ScientificMode, InputLabels>> = {
     ["Measured final volume (L)", "الحجم النهائي المقاس (لتر)"]],
 };
 const keys = ["first", "second", "third", "fourth", "final"];
-const publicApi = labApi("/api/impact");
 
-export function Calculators({ api = publicApi }: { api?: LabApi }) {
+export function Calculators() {
   const lang = useLanguage();
   const t = (en: string, ar: string) => words(lang, en, ar);
-  const [mode, setMode] = useState<ScientificMode | "impact">("mass");
+  const [mode, setMode] = useState<ScientificMode>("mass");
   const [result, setResult] = useState<ReturnType<typeof scientific>>();
   const [error, setError] = useState(false);
-  const impact = useMutation({ mutationFn: (form: FormData) => api<ImpactCalculation>("/calculator", readScenario(form)), gcTime: 0 });
   function evaluate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    if (mode === "impact") { impact.mutate(form); return; }
     const outcome = scientific(mode, { formula: field(form, "formula"), unit: field(form, "unit"),
       ...Object.fromEntries(keys.map((key) => [key, numeric(form, key)])) });
     setResult(outcome);
@@ -64,28 +57,24 @@ export function Calculators({ api = publicApi }: { api?: LabApi }) {
     <h2>{t("Scientific calculators", "الحاسبات العلمية")}</h2>
     <label htmlFor="calculator-mode">{t("Calculation", "الحساب")}</label>
     <select id="calculator-mode" value={mode} onChange={(event) => {
-      setMode(event.target.value as typeof mode); setResult(undefined); setError(false); impact.reset();
+      setMode(event.target.value as typeof mode); setResult(undefined); setError(false);
     }}>
       {modes.map(([key, en, ar]) => <option key={key} value={key}>{t(en, ar)}</option>)}
     </select>
     <form className="impact-form" key={mode} onSubmit={evaluate}>
-      {mode === "impact" ? <ScenarioEditor /> : <div className="impact-grid compact">
+      <div className="impact-grid compact">
         {mode === "mass" && <LabInput name="formula" en="Molecular formula (e.g. H2O)" ar="الصيغة الجزيئية (مثل H2O)" required />}
         {labels[mode]?.map(([en, ar], i) => <LabInput key={keys[i]} name={keys[i]} en={en} ar={ar} type="number" required />)}
         {mode === "conversion" && <LabSelect name="unit" en="Original unit" ar="الوحدة الأصلية" required value="mL" options={quantityUnits.map((x) => [x, x])} />}
-      </div>}
-      <Submit busy={impact.isPending}>{t("Calculate", "احسب")}</Submit>
+      </div>
+      <Submit>{t("Calculate", "احسب")}</Submit>
     </form>
     {mode === "mass" ? <p>{t("Uses PubChem reference weights for elements with standard atomic weights. Isotope-specific masses and hydrates require a separate method.",
       "تُستخدم قيم PubChem المرجعية للعناصر ذات الأوزان الذرية القياسية. تتطلب كتل النظائر والهيدرات طريقة مستقلة.")} <a href={periodicSource} target="_blank" rel="noreferrer">PubChem</a></p> :
-      mode !== "impact" && <p>{t("Use measurements in the stated units. Concentration and balance formulas assume conserved solute and measured final volume where applicable. They do not assess reactions or mixing safety.",
+      <p>{t("Use measurements in the stated units. Concentration and balance formulas assume conserved solute and measured final volume where applicable. They do not assess reactions or mixing safety.",
         "استخدم قياسات بالوحدات المبينة. تفترض معادلات التركيز والاتزان حفظ المذاب والحجم النهائي المقاس عند انطباقه. ولا تقيّم التفاعلات أو سلامة الخلط. ")} <a href={concentrationSource} target="_blank" rel="noreferrer">OpenStax Chemistry 2e</a></p>}
-    {mode === "impact" && <p>{t("Baseline minus intervention. Estimates use verified rates available to this workspace and the entered assumptions. Publication on an assessment requires qualified review.",
-      "السيناريو المرجعي ناقص التدخل. تستخدم التقديرات المعاملات الموثّقة المتاحة لمساحة العمل والافتراضات المدخلة. يتطلب النشر في التقييم مراجعة مؤهلة.")}</p>}
     {error && <p role="alert">{t("The input is out of range or this calculation is unavailable.", "القيم خارج النطاق أو الحساب غير متاح.")}</p>}
-    <FormError error={impact.error} />
     {result && <div role="status"><MetricCards items={[{ title: t("Calculated value", "القيمة المحسوبة"), value: numberLabel(lang, result.value, result.unit) }]} /></div>}
-    {mode === "impact" && impact.data && <CalculationView calculation={impact.data} />}
   </section>;
 }
 

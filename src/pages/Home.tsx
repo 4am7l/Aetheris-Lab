@@ -89,6 +89,7 @@ export default function Home() {
           <Icon name="search" />
           <input
             aria-label={t("search")}
+            enterKeyHint="search"
             placeholder={t("shortSearchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}

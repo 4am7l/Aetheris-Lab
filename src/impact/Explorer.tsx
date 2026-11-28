@@ -3,6 +3,7 @@ import { Button, Chip } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import PageHeading from "../components/PageHeading";
+import SearchField from "../components/SearchField";
 import { useLanguage } from "../text";
 import type { CompoundDetail, CompoundReference, PairEvidence } from "./science";
 import type { CatalogChemical, OrganizationDirectory } from "./contracts";
@@ -240,8 +241,10 @@ export function Explorer({ api = publicApi, scope = "public", reviewer, director
   }
   return <section className="panel impact-panel">
     <h2>{storageOnly ? t("Storage compatibility", "توافق التخزين") : t("Chemical explorer", "مستكشف المواد الكيميائية")}</h2>
-    <form className="impact-grid compact" onSubmit={search}>
-      <LabInput name="q" en="Arabic or English name, CAS, formula or CID" ar="الاسم بالعربية أو الإنجليزية أو CAS أو الصيغة أو المعرّف" value={q} />
+    <form className="impact-grid compact explorer-search" onSubmit={search}>
+      <SearchField name="q" accessibleName={t("Search chemical references", "البحث في المراجع الكيميائية")}
+        placeholder={t("Search catalogue", "ابحث في الدليل")} defaultValue={q}
+        helperText={t("Arabic or English name, CAS, formula or CID", "الاسم بالعربية أو الإنجليزية أو CAS أو الصيغة أو المعرّف")} />
       <Submit>{t("Search chemical references", "البحث في المراجع الكيميائية")}</Submit>
     </form>
     {query.isPending && <p role="status">{t("Loading references…", "جارٍ تحميل المراجع…")}</p>}
@@ -270,10 +273,12 @@ export function Explorer({ api = publicApi, scope = "public", reviewer, director
     {!storageOnly && <>
       <details className="impact-details" open={Boolean(cid || external) || undefined}>
         <summary>{t("Search PubChem beyond the reference catalogue", "البحث في PubChem خارج قائمة المراجع")}</summary>
-        <form className="impact-grid compact" onSubmit={(event) => {
+        <form className="impact-grid compact explorer-search" onSubmit={(event) => {
           event.preventDefault(); setExternal(field(new FormData(event.currentTarget), "pubchem"));
         }}>
-          <LabInput name="pubchem" en="English substance name, CAS, formula or CID" ar="اسم المادة بالإنجليزية أو CAS أو الصيغة أو المعرّف" value={q} required />
+          <SearchField name="pubchem" accessibleName={t("Search PubChem", "البحث في PubChem")}
+            placeholder={t("Search PubChem", "ابحث في PubChem")} defaultValue={q} required
+            helperText={t("English substance name, CAS, formula or CID", "اسم المادة بالإنجليزية أو CAS أو الصيغة أو المعرّف")} />
           <Submit>{t("Search PubChem", "البحث في PubChem")}</Submit>
         </form>
         <FormError error={lookup.error} />

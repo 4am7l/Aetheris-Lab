@@ -70,7 +70,7 @@ function impactRateScope(pathname: string) {
     return separate.includes(workspace) ? "impact-workspace-" + workspace + ":" : "impact-workspace:";
   }
   if (["chemicals", "knowledge", "pictograms", "pairs"].includes(feature)) return "impact-reference:";
-  if (feature === "profile" || feature === "personal") return "impact-profile:";
+  if (feature === "personal") return "impact-personal:";
   return "impact-operation:";
 }
 
@@ -245,7 +245,7 @@ export default {
       const origin = request.headers.get("Origin");
       if (origin !== null && origin !== new URL(request.url).origin) return error("FORBIDDEN", 403);
       try {
-        const restrictedWrite = request.method === "POST" && ["/api/impact/profile/create", "/api/impact/workspace/redeem",
+        const restrictedWrite = request.method === "POST" && ["/api/impact/workspace/redeem",
           "/api/impact/workspace/sds"].includes(pathname);
         const limiter = restrictedWrite ? env.SUBMISSION_LIMIT : env.TRACKING_LIMIT;
         if (!env.DB || !limiter) return error("SERVICE_UNAVAILABLE", 503);

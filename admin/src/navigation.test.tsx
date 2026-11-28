@@ -65,6 +65,40 @@ function mount(path = "/") {
   </MemoryRouter></QueryClientProvider></StrictMode>);
 }
 
+it("opens a read-only assessment breakdown from the authenticated sustainability dashboard", async () => {
+  const fallback = fetchMock.getMockImplementation()!;
+  const unavailable = { value: null, covered: 0 };
+  const values = { estimate: 4, realized: null, carbon: null, verifiedCarbon: null,
+    estimatedWaste: null, estimatedWasteKg: null, waste: null, wasteKg: null };
+  const row = { id: "first", date: createdAt, completedAt: createdAt, status: "Approved", names: ["Sample", "Water"], ...values };
+  fetchMock.mockImplementation(async (path, options) => {
+    const url = String(path);
+    if (url === "/api/admin/impact/directory") return Response.json({ institutions: [], departments: [], labs: [] });
+    if (url.startsWith("/api/admin/impact/overview?")) return Response.json({ totals: {
+      assessments: 1, completed: 1, approved: 1, incompatibilities: 0, estimatedFinancial: { value: 4, covered: 1 },
+      verifiedFinancial: unavailable, carbon: unavailable, verifiedCarbon: unavailable, estimatedAvoided: unavailable,
+      estimatedAvoidedKg: unavailable, avoided: unavailable, avoidedKg: unavailable,
+    }, series: [], laboratories: [], chemicals: [], incompatibilities: [], log: [row], next: null });
+    if (url === "/api/admin/requests/first") return Response.json({ ...detail("first"), status: "Approved", approvedResult: {
+      classification: "Insufficient information", conditions: "", hazards: [], incompatibilities: [],
+      storage: "", container: "", limitations: [], sources: [], reviewedAt: createdAt,
+    } });
+    if (url === "/api/admin/impact/operations/first") return Response.json({
+      ...row, assessed: { liters: 0.25, kilograms: null }, fixedGuide: [],
+    });
+    return fallback(path, options);
+  });
+  mount("/impact");
+  expect(await screen.findByRole("heading", { name: "Cumulative totals" })).toBeTruthy();
+  const link = screen.getByRole("link", { name: /Sample · Water/ });
+  fireEvent.click(link);
+  expect(await screen.findByRole("heading", { name: "Verified real-world outcomes" })).toBeTruthy();
+  expect(screen.getByText("4.000 JOD")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /submit for verification|save estimate/i })).toBeNull();
+  expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/api/admin/impact"))
+    .every(([, options]) => options?.method === "GET")).toBe(true);
+}, 15_000);
+
 it("queues a failed assessment for the same request and shows the retry confirmation", async () => {
   const failed: AdminRequestDetail = {
     ...detail("first"), status: "Pending Review", canRetry: true,

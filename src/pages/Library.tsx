@@ -1,15 +1,13 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Chip from "@mui/material/Chip";
-import TextField from "@mui/material/TextField";
-import InputAdornment from "@mui/material/InputAdornment";
-import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Button from "@mui/material/Button";
 import { categories, searchChemicals } from "../data/chemicals";
 import { Icon } from "../ui";
 import { useText } from "../text";
 import PageHeading from "../components/PageHeading";
+import SearchField from "../components/SearchField";
 export default function Library() {
   const t = useText();
   const [params, setParams] = useSearchParams();
@@ -26,36 +24,16 @@ export default function Library() {
         title={t("library")}
         description={t("libraryIntro")}
       />
-      <div><Button variant="contained" component={Link} to="/library/explorer">{t("chemicalExplorerNav")}</Button></div>
-      <TextField
-        className="library-search"
-        fullWidth
+      <div className="library-actions"><Button variant="contained" component={Link} to="/library/explorer">{t("chemicalExplorerNav")}</Button></div>
+      <SearchField
+        accessibleName={t("search")}
         placeholder={t("searchPlaceholder")}
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
           setVisible(8);
         }}
-        slotProps={{
-          htmlInput: { "aria-label": t("search") },
-          input: {
-            startAdornment: (
-              <InputAdornment position="start">
-                <Icon name="search" />
-              </InputAdornment>
-            ),
-            endAdornment: query ? (
-              <InputAdornment position="end">
-                <IconButton
-                  aria-label={t("close")}
-                  onClick={() => setQuery("")}
-                >
-                  <Icon name="close" />
-                </IconButton>
-              </InputAdornment>
-            ) : undefined,
-          },
-        }}
+        clear={query ? { label: t("clearSearch"), action: () => setQuery("") } : undefined}
       />
       {query && (
         <div className="suggestions">

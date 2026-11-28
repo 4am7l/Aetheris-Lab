@@ -53,7 +53,7 @@ The review compared the sustainability branch with the pre-sustainability applic
    npx wrangler d1 time-travel info aetheris-lab-db --config wrangler.toml
    ```
 
-3. Apply pending migrations in filename order and verify `0007` through `0011` show as applied. Deploy the Worker first with the existing `DB`, `IMAGES`, `SUBMISSION_LIMIT` and `TRACKING_LIMIT` bindings and preserved secrets. Check health, a historical receipt and a guide-covered unaffiliated fixture in staging before deploying either UI.
+3. Apply pending migrations in filename order and verify migrations through `0012_impact_statistics.sql` show as applied. Deploy the Worker first with the existing `DB`, `IMAGES`, `SUBMISSION_LIMIT` and `TRACKING_LIMIT` bindings and preserved secrets. Check health, a historical receipt and a guide-covered unaffiliated fixture in staging before deploying either UI.
 
    ```sh
    npx wrangler d1 migrations apply aetheris-lab-db --remote --config wrangler.toml
@@ -77,7 +77,7 @@ The review compared the sustainability branch with the pre-sustainability applic
    npx wrangler rollback "$PRE_RELEASE_WORKER_VERSION" --config wrangler.toml
    ```
 
-2. Keep the additive schema and existing R2 objects during application rollback. Migrations `0010` and `0011` preserve earlier snapshots and source rates. Avoid serving a pre-audit sustainability writer against the upgraded tables because it still accepts the pre-audit accounting rules.
+2. Keep the additive schema and existing R2 objects during application rollback. Migration `0012` adds an index and needs no data rollback. Rolling the Worker back to a pre-dashboard build restores that build’s manual impact routes.
 3. Use D1 Time Travel only after a separate data-recovery decision. Pause writes, record a current bookmark, preserve or reconcile post-bookmark D1 changes and check R2 separately. Time Travel replaces the database in place and leaves R2 objects as they were at the time of rollback. [D1 Time Travel recovery](https://developers.cloudflare.com/d1/reference/time-travel/)
 
    ```sh

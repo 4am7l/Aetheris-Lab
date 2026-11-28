@@ -1,0 +1,351 @@
+/* Google Material Symbols Rounded subset. See material-symbols.LICENSE.txt. */
+@font-face {
+  font-family: "Material Symbols Rounded";
+  src: url("./assets/material-symbols-rounded.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
+
+.material-symbols-rounded {
+  font-feature-settings: "liga";
+}
+
+:root {
+  --surface-container-lowest: var(--surface);
+  --surface-container-low: #f8faff;
+  --surface-container: var(--soft);
+  --outline-variant: var(--line);
+  --field-outline: #6e7b8e;
+  --error: #b3261e;
+  --error-container: #fceeed;
+  --error-outline: #f2d2cf;
+  --navigation-translucent: rgb(244 247 251 / 78%);
+  --scrim: rgb(15 18 24 / 36%);
+  --field-height: 52px;
+  --field-radius: 12px;
+  --field-inline: 14px;
+  --field-block: 14px;
+  --field-line-height: 1.5;
+}
+
+:root[data-theme="dark"] {
+  --surface-container-low: #1a202b;
+  --field-outline: #8996aa;
+  --error: #f2b8b5;
+  --error-container: #3b2527;
+  --error-outline: #623b3e;
+  --navigation-translucent: rgb(18 22 30 / 80%);
+  --scrim: rgb(0 0 0 / 48%);
+}
+
+/* Native and Material selects share the same arrow-free appearance. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: none;
+  background-repeat: no-repeat;
+}
+
+select:not(:disabled) {
+  cursor: pointer;
+}
+
+:root :is(.MuiNativeSelect-icon, .MuiSelect-icon) {
+  display: none;
+}
+
+:is(input:not([type="checkbox"], [type="radio"], [type="file"], [type="hidden"]), textarea, select):not(.MuiInputBase-input) {
+  min-inline-size: 0;
+  min-block-size: var(--field-height);
+  border: 1px solid var(--field-outline);
+  border-radius: var(--field-radius);
+  padding: var(--field-block) var(--field-inline);
+  background-color: var(--surface-container-lowest);
+  line-height: var(--field-line-height);
+}
+
+:is(input:not([type="checkbox"], [type="radio"], [type="file"], [type="hidden"]), textarea, select):not(.MuiInputBase-input):focus {
+  border-color: transparent;
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+:root .MuiOutlinedInput-root {
+  --field-fill: var(--surface-container-lowest);
+  min-block-size: var(--field-height);
+  min-inline-size: 0;
+  border-radius: var(--field-radius);
+  background-color: var(--field-fill);
+  font-size: 1rem;
+  line-height: var(--field-line-height);
+}
+
+:root .MuiOutlinedInput-root.MuiInputBase-multiline {
+  padding: var(--field-block) var(--field-inline);
+}
+
+:root .MuiOutlinedInput-root.MuiInputBase-adornedStart {
+  padding-inline-start: var(--field-inline);
+}
+
+:root .MuiOutlinedInput-root.MuiInputBase-adornedEnd {
+  padding-inline-end: var(--field-inline);
+}
+
+:root .MuiOutlinedInput-root > :is(.MuiInputBase-input, .MuiNativeSelect-select, .MuiSelect-select) {
+  min-inline-size: 0;
+  border: 0;
+  background-color: transparent;
+  background-image: none;
+  background-repeat: no-repeat;
+  line-height: inherit;
+}
+
+:root .MuiOutlinedInput-root:not(.MuiInputBase-multiline) > :is(.MuiInputBase-input, .MuiNativeSelect-select, .MuiSelect-select):not([type="hidden"]) {
+  box-sizing: border-box;
+  min-block-size: var(--field-height);
+  block-size: auto;
+  padding: var(--field-block) var(--field-inline);
+}
+
+:root .MuiOutlinedInput-root.MuiInputBase-adornedStart > .MuiInputBase-input:not([type="hidden"]) {
+  padding-inline-start: 0;
+}
+
+:root .MuiOutlinedInput-root.MuiInputBase-adornedEnd > .MuiInputBase-input:not([type="hidden"]) {
+  padding-inline-end: 0;
+}
+
+/* The notched outline is the only focus stroke. Keep it on the container. */
+:root .MuiOutlinedInput-root > :is(.MuiInputBase-input, .MuiNativeSelect-select, .MuiSelect-select):focus {
+  outline: none;
+}
+
+:root .MuiOutlinedInput-root .MuiOutlinedInput-notchedOutline {
+  border-color: var(--field-outline);
+}
+
+@media (hover: hover) {
+  :root .MuiOutlinedInput-root:not(.Mui-focused, .Mui-error, .Mui-disabled):hover .MuiOutlinedInput-notchedOutline {
+    border-color: var(--ink);
+  }
+}
+
+:root .MuiOutlinedInput-root.Mui-focused:not(.Mui-error) .MuiOutlinedInput-notchedOutline {
+  border-color: var(--primary);
+  border-width: 2px;
+}
+
+:root .MuiOutlinedInput-root.Mui-error .MuiOutlinedInput-notchedOutline {
+  border-color: var(--error);
+}
+
+:root .MuiOutlinedInput-root.Mui-disabled .MuiOutlinedInput-notchedOutline {
+  border-color: var(--outline-variant);
+}
+
+:root .MuiInputLabel-outlined {
+  --label-inline: var(--field-inline);
+  line-height: var(--field-line-height);
+}
+
+:root[dir="rtl"] .MuiInputLabel-outlined {
+  --label-inline: calc(-1 * var(--field-inline));
+}
+
+:root .MuiInputLabel-outlined:not(.MuiInputLabel-shrink) {
+  max-inline-size: calc(100% - 2 * var(--field-inline));
+  transform: translate(var(--label-inline), var(--field-block)) scale(1);
+}
+
+:root .MuiInputLabel-outlined.MuiInputLabel-shrink {
+  max-inline-size: calc(133% - 2 * var(--field-inline));
+  transform: translate(var(--label-inline), -9px) scale(.75);
+}
+
+:root .MuiFormHelperText-contained {
+  margin-inline: var(--field-inline);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+:root .MuiOutlinedInput-root .MuiInputAdornment-root {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+:is(.home-search, .search-field .MuiOutlinedInput-root) {
+  min-block-size: var(--field-height);
+  border-radius: var(--shape-full);
+  background-color: var(--surface-container);
+}
+
+.home-search {
+  border-color: var(--field-outline);
+  min-inline-size: 0;
+}
+
+.home-search:focus-within {
+  background-color: var(--surface-container);
+  border-color: transparent;
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+:root .home-search > input {
+  min-block-size: 42px;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  padding: 8px 0;
+  background: transparent;
+  font-size: 1rem;
+}
+
+:root .home-search > input:focus {
+  outline: none;
+}
+
+:root .search-field .MuiOutlinedInput-root {
+  --field-fill: var(--surface-container);
+  border-radius: var(--shape-full);
+}
+
+:is(.search-field input, .home-search input)::placeholder {
+  color: var(--muted);
+  opacity: 1;
+  text-overflow: ellipsis;
+}
+
+.search-field input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.search-field .MuiIconButton-root {
+  margin-inline-end: -6px;
+}
+
+.library-actions {
+  margin-block-end: 16px;
+}
+
+.explorer-search > div:last-child {
+  padding-block-start: 4px;
+}
+
+.sidebar {
+  background-color: var(--surface-container-low);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@supports (backdrop-filter: blur(14px)) or (-webkit-backdrop-filter: blur(14px)) {
+  .sidebar {
+    background-color: var(--navigation-translucent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .sidebar {
+    background-color: var(--surface-container-low);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+.sidebar nav a.MuiListItemButton-root {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--shape-full);
+  background-color: transparent;
+}
+
+.sidebar nav a.MuiListItemButton-root[aria-current="page"] {
+  background-color: var(--selected);
+  color: var(--selected-ink);
+}
+
+.sidebar nav a.MuiListItemButton-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background-color: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s var(--ease-smooth);
+}
+
+@media (hover: hover) {
+  .sidebar nav a.MuiListItemButton-root:hover::before {
+    opacity: .08;
+  }
+}
+
+.sidebar nav a.MuiListItemButton-root:is(:focus-visible, .Mui-focusVisible) {
+  outline: 2px solid var(--primary);
+  outline-offset: -3px;
+}
+
+.sidebar nav a.MuiListItemButton-root:is(:focus-visible, .Mui-focusVisible)::before {
+  opacity: .10;
+}
+
+.sidebar nav a.MuiListItemButton-root:active::before {
+  opacity: .14;
+}
+
+.mobile-scrim {
+  background: var(--scrim);
+}
+
+:is(.panel, .solution-card, .start-work.MuiPaper-root, .submission-panel, .catalog-table-heading, .request-solution) {
+  background-color: var(--surface-container-low);
+}
+
+:is(.panel, .solution-card):hover {
+  transform: none;
+  border-color: var(--outline-variant);
+  box-shadow: none;
+}
+
+.button.primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+:is(.notice.error, .error-pill),
+:root[data-theme] :is(.notice.error, .error-pill) {
+  color: var(--error);
+  background-color: var(--error-container);
+  border-color: var(--error-outline);
+}
+
+:root[data-theme] .field-error {
+  color: var(--error);
+}
+
+@media (forced-colors: active) {
+  :root .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline,
+  :root .MuiOutlinedInput-root.Mui-focused.Mui-error .MuiOutlinedInput-notchedOutline {
+    border-color: Highlight;
+  }
+  .sidebar {
+    background-color: Canvas;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .sidebar nav a.MuiListItemButton-root[aria-current="page"] {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    color: HighlightText;
+  }
+  .sidebar nav a.MuiListItemButton-root:is(:focus-visible, .Mui-focusVisible) {
+    outline-color: LinkText;
+  }
+}

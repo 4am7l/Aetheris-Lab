@@ -130,6 +130,7 @@ export const en = {
   catalogNote:
     "4 initial substance references · Not a comprehensive database · No pairwise compatibility verdicts",
   searchPlaceholder: "Search name, formula, CAS number, or category…",
+  clearSearch: "Clear search",
   empty: "No matching entries",
   emptyText: "Try another name or remove a category filter.",
   details: "View reference",
@@ -454,6 +455,7 @@ export const ar: Partial<Record<TextKey, string>> = {
   empty: "لا توجد نتائج",
   details: "عرض المرجع",
   searchPlaceholder: "ابحث بالاسم أو الصيغة أو رقم CAS أو الفئة…",
+  clearSearch: "مسح البحث",
   footer: "مراجع كيميائية ومراجعة الخبراء",
   loading: "جارٍ التحميل…",
   conditions: "الظروف البيئية والسياق",

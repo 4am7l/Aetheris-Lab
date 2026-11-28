@@ -1,12 +1,11 @@
 import type { Env } from "../index";
 import { error, json } from "../http";
-import { referenceId, scenarioSchema } from "../../src/impact/model";
+import { referenceId } from "../../src/impact/model";
 import { catalogDetail, catalogSearch, addChemical, addVersion } from "./catalog";
-import { operationImpact, evaluateScenario } from "./ledger";
-import { analytics } from "./analytics";
-import { attachAffiliation, authenticateMember, directory, membershipRoute, profileRoute, redeem, writeStructure } from "./organizations";
-import { canManage, profile, type Scope } from "./access";
-import { body, timestamp } from "./io";
+import { readAssessmentStatistics } from "./ledger";
+import { analytics, receiptStatistics } from "./analytics";
+import { attachAffiliation, authenticateMember, directory, membershipRoute, redeem, writeStructure } from "./organizations";
+import { canManage, type Scope } from "./access";
 import { emergency, inventory, sds } from "./laboratory";
 import { pairEvidence } from "./evidence";
 import { chemicalKnowledge, chemicalModel, chemicalSearch, pictogram } from "../sources";
@@ -30,24 +29,9 @@ export async function publicImpact(request: Request, env: Env) {
   if (route === "/pairs" && request.method === "GET") return pairEvidence(request, DB);
   const reference = request.method === "GET" ? knowledgeRoute(route, url) : null;
   if (reference) return reference;
-  if (route === "/calculator" && request.method === "POST") {
-    const scenario = await body(request, scenarioSchema);
-    if (scenario instanceof Response) return scenario;
-    const result = await evaluateScenario(DB, scenario, { institutionId: null, labId: null, geography: null }, timestamp());
-    return json(result.result);
-  }
-  const operation = /^\/operations\/([^/]+)(?:\/(report|withdraw))?$/.exec(route);
-  if (operation) {
-    const mode = operation[2] as "report" | "withdraw" | undefined;
-    return request.method === (mode ? "POST" : "GET") ? operationImpact(request, DB, operation[1], mode ?? "view") :
-      error("METHOD_NOT_ALLOWED", 405);
-  }
-  const profileAction = /^\/profile\/(create|link|revoke)$/.exec(route)?.[1] as "create" | "link" | "revoke" | undefined;
-  if (profileAction && request.method === "POST") return profileRoute(request, DB, profileAction);
-  if (route === "/personal" && request.method === "GET") {
-    const subject = await profile(DB, request);
-    return subject ? analytics(DB, url, { profileId: subject.id }, "json") : error("UNAUTHORIZED", 401);
-  }
+  const operation = /^\/operations\/([^/]+)$/.exec(route)?.[1];
+  if (operation && request.method === "GET") return readAssessmentStatistics(request, DB, operation);
+  if (route === "/personal") return request.method === "POST" ? receiptStatistics(request, DB) : error("METHOD_NOT_ALLOWED", 405, { Allow: "POST" });
   if (route === "/workspace/redeem" && request.method === "POST") return redeem(request, DB);
   if (!route.startsWith("/workspace/")) return error("NOT_FOUND", 404);
   const scope = await authenticateMember(request, DB);
@@ -68,16 +52,9 @@ export async function managedImpact(request: Request, env: Env, route: string, s
   const url = new URL(request.url);
   const reference = read ? knowledgeRoute(route, url) : null;
   if (reference) return reference;
-  if (write && route === "/calculator") {
-    const scenario = await body(request, scenarioSchema);
-    if (scenario instanceof Response) return scenario;
-    const { institutionId, labId } = scope;
-    const organization = institutionId ? await DB.prepare("SELECT geography FROM institutions WHERE id = ?").bind(institutionId).first<{ geography: string }>() : null;
-    const geography = organization?.geography ?? null;
-    const result = await evaluateScenario(DB, scenario, { institutionId, labId, geography }, timestamp());
-    return json(result.result);
+  if (read && (route === "/overview" || route === "/overview.csv")) {
+    return scope.global ? analytics(DB, url, scope, route.endsWith(".csv") ? "csv" : "json") : error("FORBIDDEN", 403);
   }
-  if (read && (route === "/overview" || route === "/overview.csv")) return analytics(DB, url, scope, route.endsWith(".csv") ? "csv" : "json");
   if (route === "/directory") {
     if (read) return directory(DB, scope);
     if (write) return writeStructure(request, DB, scope);
@@ -101,25 +78,22 @@ export async function managedImpact(request: Request, env: Env, route: string, s
   if (stock) return inventory(request, DB, scope, stock[1], stock[2]);
   const document = /^\/sds(?:\/([A-Za-z0-9-]+)(?:\/(file|review))?)?$/.exec(route);
   if (document) return sds(request, env, scope, document[1], document[2]);
-  const operation = /^\/operations\/([^/]+)(?:\/(estimate|review|guide-match))?$/.exec(route);
-  if (operation) {
-    const mode = operation[2] as "estimate" | "review" | "guide-match" | undefined;
-    return request.method === (mode ? "POST" : "GET") ? operationImpact(request, DB, operation[1], mode ?? "view", scope) :
-      error("METHOD_NOT_ALLOWED", 405);
-  }
+  const operation = /^\/operations\/([^/]+)$/.exec(route)?.[1];
+  if (operation && read && scope.global) return readAssessmentStatistics(request, DB, operation, true);
   if (read && route === "/audit") {
     if (!canManage(scope)) return error("FORBIDDEN", 403);
     const list = await DB.prepare(`
       SELECT 'audit-' || id AS id, institution_id AS institutionId, lab_id AS labId, actor, action,
         resource_id AS resourceId, created_at AS createdAt FROM sustainability_audit WHERE (? OR institution_id = ?)
       UNION ALL SELECT 'impact-' || e.id, a.institution_id, a.lab_id, e.actor, e.state, e.request_id, e.created_at
-        FROM impact_events e LEFT JOIN impact_affiliations a USING(request_id) WHERE (? OR a.institution_id = ?)
+        FROM impact_events e LEFT JOIN impact_affiliations a USING(request_id) WHERE ?
       UNION ALL SELECT 'stock-' || m.id, i.institution_id, i.lab_id, m.actor, 'stock-' || m.kind, i.id, m.created_at
         FROM inventory_movements m JOIN inventory_items i ON i.id = m.item_id WHERE (? OR i.institution_id = ?)
       UNION ALL SELECT 'sds-' || id, institution_id, lab_id, reviewed_by, 'sds-' || review_status, id, reviewed_at
         FROM sds_documents WHERE reviewed_at IS NOT NULL AND (? OR institution_id = ?)
       ORDER BY createdAt DESC, id DESC LIMIT 100`)
-      .bind(...Array.from({ length: 4 }, () => [Number(scope.global), scope.institutionId]).flat()).all();
+      .bind(Number(scope.global), scope.institutionId, Number(scope.global),
+        Number(scope.global), scope.institutionId, Number(scope.global), scope.institutionId).all();
     return json({ events: list.results });
   }
   return error("NOT_FOUND", 404);
