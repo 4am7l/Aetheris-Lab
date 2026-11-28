@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+import { URL } from "node:url";
 import { writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 function crc32(buf) {
